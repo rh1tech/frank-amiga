@@ -120,13 +120,23 @@ static bool row_has_blocks, row_colours_changed;
 HostRun host_run = { run_stage, 0, 0, ~0u };
 
 // ── Core 0: producer ──────────────────────────────────────────────────────
+// frank-amiga: the consumer's position as last read. It only moves forward,
+// so a stale copy under-states the room and is safe; the shared variable is
+// read again only when the copy says the ring might be full.
+static uint32_t tail_seen;
+static inline void ringWaitRoom(uint32_t head, uint32_t count) {
+    if (ringFill(head, tail_seen) + count <= RING_WORDS)
+        return;
+    do {
+        tail_seen = __atomic_load_n(&ring_tail, __ATOMIC_ACQUIRE);
+    } while (ringFill(head, tail_seen) + count > RING_WORDS);
+}
+
 static inline void ringPush(const uint32_t *words, uint32_t count) {
     uint32_t head = ring_wr;
-    // Wait for room: core 1 converts faster than the emulator fetches, so
+    // Wait for room: the link drains faster than the emulator fills, so
     // this only waits after a burst.
-    while (ringFill(head, __atomic_load_n(&ring_tail, __ATOMIC_ACQUIRE)) +
-           count > RING_WORDS)
-        tight_loop_contents();
+    ringWaitRoom(head, count);
     uint32_t slot = ringSlot(head);
     if (slot + count <= RING_WORDS) {
         for (uint32_t i = 0; i < count; ++i)
@@ -162,9 +172,7 @@ static void __attribute__((noinline)) runStart(uint32_t header) {
     row_has_blocks = true;
     host_row_hash = hostMix(host_row_hash, header);
     const uint32_t head = ring_wr;
-    while (ringFill(head, __atomic_load_n(&ring_tail, __ATOMIC_ACQUIRE)) +
-           MSG_MAX_WORDS > RING_WORDS)
-        tight_loop_contents();
+    ringWaitRoom(head, MSG_MAX_WORDS);
     const uint32_t slot = ringSlot(head);
     host_run.msg = slot + MSG_MAX_WORDS <= RING_WORDS ? &ring[slot] : run_stage;
     host_run.msg[0] = header;
