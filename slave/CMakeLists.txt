@@ -40,6 +40,7 @@ add_executable(frank-amiga-slave
     src/main.c
     src/host_link.c
     src/link_pump.c
+    src/upload.c
     src/platform/Memory.c
     src/platform/MemoryBoot.c
     src/platform/Planar.c

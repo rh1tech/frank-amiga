@@ -24,6 +24,7 @@
 #include "link_stream.h"
 #include "host_link.h"
 #include "HostRing.h"
+#include "upload.h"
 
 static link_t link;
 static link_session_t sess;
@@ -189,6 +190,7 @@ static void __not_in_flash_func(pump_loop)(void) {
             break;
         }
         default:
+            upload_handle(&sess, op);   /* Kickstart / disk uploads, boot */
             break;
         }
     }

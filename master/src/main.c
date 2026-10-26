@@ -26,6 +26,7 @@
 #include "denise/denise_frames.h"
 #include "input.h"
 #include "stream.h"
+#include "media.h"
 #include "audio/audio.h"
 #include "video/hstx_video.h"
 #include "pico/multicore.h"
@@ -225,6 +226,41 @@ static void cmd_mouse(int argc, char **argv) {
 
 static void cmd_reset(int argc, char **argv) { stream_input(LINK_EV_RESET, 0, 0, 0); }
 
+/* Wait for the slave to come back after a BOOT, then stream again. */
+static void wait_slave_and_stream(void) {
+    sleep_ms(300);
+    for (int i = 0; i < 80 && !slave_hello(); i++) sleep_ms(100);
+    stream_start();
+}
+
+/* boot: reread 0:/amiga/frank-amiga.ini, upload, cold-start the Amiga. */
+static void cmd_boot(int argc, char **argv) {
+    if (media_load_config() && media_boot()) wait_slave_and_stream();
+    else stream_start();
+}
+
+/* kick <path> / ext <path>: change the ROM and cold-start. */
+static void cmd_kick(int argc, char **argv) {
+    if (argc < 2) { printf("kick=%s ext=%s\n", media_config.kick, media_config.ext); return; }
+    char *dst = !strcmp(argv[0], "ext") ? media_config.ext : media_config.kick;
+    snprintf(dst, sizeof media_config.kick, "%s%s",
+             argv[1][0] == '0' && argv[1][1] == ':' ? "" : "0:", argv[1]);
+    if (!strcmp(argv[1], "none")) dst[0] = 0;
+    if (media_boot()) wait_slave_and_stream(); else stream_start();
+}
+
+/* df0 <path>: change the disk in DF0 while running. */
+static void cmd_df0(int argc, char **argv) {
+    if (argc < 2) { printf("df0=%s\n", media_config.df0); return; }
+    media_insert_df0(argv[1]);
+}
+
+/* sdput <psram offset hex> <bytes> <path>: save master PSRAM to the SD. */
+static void cmd_sdput(int argc, char **argv) {
+    if (argc < 4) return;
+    media_sdput((uint32_t)strtoul(argv[1], NULL, 16), (uint32_t)strtoul(argv[2], NULL, 0), argv[3]);
+}
+
 /* vol <0..256>: output volume (256 = unity; default 128). */
 static void cmd_vol(int argc, char **argv) {
     if (argc > 1) audio_set_volume((uint32_t)atoi(argv[1]));
@@ -268,6 +304,11 @@ static const console_cmd_t cmds[] = {
     { "mouse",  cmd_mouse,  "mouse <dx> <dy> [buttons]" },
     { "reset",  cmd_reset,  "Ctrl-Amiga-Amiga" },
     { "vol",    cmd_vol,    "vol [0..256]: audio output volume" },
+    { "boot",   cmd_boot,   "reload frank-amiga.ini, upload, cold-start" },
+    { "kick",   cmd_kick,   "kick <path>: change Kickstart and cold-start" },
+    { "ext",    cmd_kick,   "ext <path|none>: extended ROM and cold-start" },
+    { "df0",    cmd_df0,    "df0 <path>: change the disk in DF0" },
+    { "sdput",  cmd_sdput,  "sdput <psram off hex> <bytes> <path>: save to SD" },
     BRINGUP_COMMANDS
     { NULL, NULL, NULL },
 };
@@ -298,6 +339,14 @@ int main(void) {
     for (int i = 0; i < 50 && !slave_hello(); i++) sleep_ms(100);
     link_set_bulk_clkdiv(&link, 1.0f);
     sess.handshake_timeout_us = 20000;
+    media_init(&sess);
+    /* Kickstart and disks from the microSD: upload, then the slave
+     * restarts from them. Without a configuration it runs whatever it
+     * has in flash. */
+    if (media_load_config() && media_boot()) {
+        sleep_ms(300);
+        for (int i = 0; i < 80 && !slave_hello(); i++) sleep_ms(100);
+    }
     amiga_start();
     console_run(cmds, main_poll);
 }

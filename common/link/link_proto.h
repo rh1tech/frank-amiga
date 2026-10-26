@@ -40,7 +40,30 @@ enum {
     /* arg0 = bulk clkdiv x 100 for both directions. */
     LINK_OP_SET_CLKDIV   = 0x0054,
     LINK_OP_SET_CLKDIV_ACK = 0x0055,
+
+    /* Uploads into the slave's memory (Kickstart, extended ROM, disks).
+     *   UPLOAD_BEGIN  arg0 = target (LINK_UP_*), arg1 = total bytes
+     *   UPLOAD_CHUNK  arg0 = byte offset, arg1 = bytes (<= LINK_UPLOAD_CHUNK),
+     *                 then the bulk from the master
+     *   UPLOAD_END    arg0 = CRC-32 of the whole upload; the ack's arg0 is the
+     *                 CRC the slave computed, arg1 = 1 if it matched
+     * A running emulation is held at a frame boundary meanwhile. Every
+     * request is answered by the same op | 1 (ACK). */
+    LINK_OP_UPLOAD_BEGIN = 0x0070,
+    LINK_OP_UPLOAD_CHUNK = 0x0072,
+    LINK_OP_UPLOAD_END   = 0x0074,
+    /* BOOT: arg0 = flags; (re)start the machine from the uploaded ROM. */
+    LINK_OP_BOOT         = 0x0076,
+    /* INSERT: arg0 = drive, arg1 = 0 eject / 1 insert the uploaded disk. */
+    LINK_OP_INSERT       = 0x0078,
 };
+
+enum {
+    LINK_UP_ROM = 1,      /* Kickstart, 256 or 512 KB */
+    LINK_UP_EXT = 2,      /* extended ROM at 0xE00000, 512 KB */
+    LINK_UP_DF0 = 3,      /* raw ADF for DF0, 901120 bytes */
+};
+#define LINK_UPLOAD_CHUNK (16u * 1024u)
 
 /* ---- Frame header (24 bytes), followed by payload, zero-padded to
  *      LINK_CTRL_BYTES. ---- */

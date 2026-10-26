@@ -145,16 +145,8 @@ static void tone_poll(void) {
 }
 
 /* ---- microSD ---- */
-static FATFS sd_fs;
-static bool sd_mounted;
-
-static bool sd_mount(void) {
-    if (sd_mounted) return true;
-    const FRESULT r = f_mount(&sd_fs, "0:", 1);
-    if (r != FR_OK) { printf("sd: mount failed (%d)\n", r); return false; }
-    sd_mounted = true;
-    return true;
-}
+#include "media.h"
+static bool sd_mount(void) { return media_mount(); }
 
 void bringup_cmd_sd(int argc, char **argv) {
     if (!sd_mount()) return;

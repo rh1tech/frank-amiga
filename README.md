@@ -19,6 +19,21 @@ python3 tools/uart.py master send "help\r" --until "^OK"
 
 Bench instruments (probes, chip IDs, capture devices) are in `tools/bench.conf`.
 
+## microSD layout
+
+```
+/amiga/frank-amiga.ini      kick=/amiga/kick/kick13.rom
+                            ext=/amiga/kick/aros-ext.bin   (optional, AROS)
+                            df0=/amiga/adf/game.adf        (optional)
+/amiga/kick/                Kickstart images (your own licensed copies, or AROS)
+/amiga/adf/                 disk images
+```
+
+At power-on the master uploads the configured ROMs and disk to the slave and
+starts the machine. Console (UART0, 115200): `df0 <path>` changes the disk,
+`kick`/`ext <path>` change ROMs and cold-start, `boot` rereads the ini,
+`reset` is Ctrl-Amiga-Amiga, `type`/`key`/`mouse` drive input, `stats`.
+
 ## Status
 
 - M0 bring-up: clocks (both halves 504 MHz), PSRAM, link, HDMI, I2S, microSD.

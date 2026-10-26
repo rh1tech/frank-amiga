@@ -28,6 +28,7 @@
 #include "HostRing.h"
 #include "host_link.h"
 #include "link_pump.h"
+#include "upload.h"
 #include "../omega/Chipset.h"
 #include "../omega/CIA.h"
 #include "../omega/CPU.h"
@@ -161,6 +162,7 @@ static void sample_banks(void) {
 void host_frame_paced(void) {
     pace();
     sample_banks();
+    upload_core0_frame();
     link_input_ev_t ev;
     while (pump_input_pop(&ev)) {
         switch (ev.type) {
@@ -257,34 +259,54 @@ int main(void) {
     printf("Video: %s (%d lines)\n", OMEGA_VIDEO_NAME, OMEGA_VIDEO_FRAME_LINES);
 
     memory_init();
-    if (!memory_set_rom((const uint8_t *)BOARD_ROM_FLASH_BASE, BOARD_ROM_SIZE))
-        printf("ROM: none at flash 0x%08x\n", (unsigned)BOARD_ROM_FLASH_BASE);
-    const uint8_t *ext = (const uint8_t *)BOARD_EXT_ROM_FLASH_BASE;
-    if (ext[0] == 0x11 && ext[1] == 0x14) {
-        memory_set_ext_rom(ext);
-        printf("ROM: extended ROM at flash 0x%08x\n", (unsigned)BOARD_EXT_ROM_FLASH_BASE);
-    }
-
     multicore_launch_core1(pump_core1_entry);
+
+    /* The machine's ROM, extended ROM and DF0 come from the master (it
+     * uploads them from its microSD and reboots us with LINK_OP_BOOT). With
+     * no upload, wait for the master a while, then fall back to images
+     * written to our own flash (bench development). */
+    uint32_t rom_size = 0;
+    const uint8_t *rom = upload_rom(&rom_size);
+    for (int i = 0; !rom && i < 40; i++) {
+        sleep_ms(100);                  /* the master may upload and BOOT */
+    }
+    const uint8_t *ext = NULL, *adf = NULL;
+    if (rom) {
+        ext = upload_ext_rom();
+        adf = upload_df0();
+        printf("ROM: uploaded by the master (%lu KB)%s%s\n", (unsigned long)(rom_size / 1024u),
+               ext ? ", extended ROM" : "", adf ? ", DF0 disk" : "");
+    } else {
+        rom = (const uint8_t *)BOARD_ROM_FLASH_BASE;
+        rom_size = BOARD_ROM_SIZE;
+        if (((const uint8_t *)BOARD_EXT_ROM_FLASH_BASE)[0] == 0x11)
+            ext = (const uint8_t *)BOARD_EXT_ROM_FLASH_BASE;
+        if (*(const uint32_t *)BOARD_ADF_FLASH_BASE != 0xFFFFFFFFu)
+            adf = (const uint8_t *)BOARD_ADF_FLASH_BASE;
+        printf("ROM: nothing uploaded, using flash images\n");
+    }
+    if (!memory_set_rom(rom, rom_size))
+        printf("ROM: not a Kickstart image\n");
+    if (ext) memory_set_ext_rom(ext);
+
     hostInit();
     cpu_init();
     ChipsetInit();
     for (int drive = 0; drive < 4; ++drive)
         floppyInit(drive);
-    /* DF0: an ADF in flash if there is one. Otherwise an empty drive: every
-     * track reads as a sync word and nothing else, so trackdisk times out
-     * and Kickstart shows its insert-disk screen. */
-    const uint8_t *adf = (const uint8_t *)BOARD_ADF_FLASH_BASE;
-    if (*(const uint32_t *)adf != 0xFFFFFFFFu &&
-        floppyMountADF(0, adf, FLOPPY_ADF_SIZE)) {
+    /* DF0: the disk if there is one. Otherwise an empty drive: every track
+     * reads as a sync word and nothing else, so trackdisk times out and
+     * Kickstart shows its insert-disk screen. */
+    if (adf && floppyMountADF(0, adf, FLOPPY_ADF_SIZE)) {
         df[0].hasDisk = 1;
         df[0].pra &= 0xFB;
-        printf("DF0: ADF at flash 0x%08x inserted\n", (unsigned)BOARD_ADF_FLASH_BASE);
+        printf("DF0: disk inserted\n");
     } else if (df[0].mfmData) {
         memset(df[0].mfmData, 0, BOARD_MAP_FLOPPY_SIZE);
         df[0].mfmData[0] = 0x44;
         df[0].mfmData[1] = 0x89;
     }
+    upload_set_running(true);
     printf("Entering emulation loop\n");
     emulation_loop();
 }

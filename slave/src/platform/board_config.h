@@ -25,17 +25,22 @@
 // ---------------------------------------------------------------------------
 //  0x000000..0x1FFFFF  Chip RAM        (2 MB)      Amiga 0x000000..0x1FFFFF
 //  0x200000..0x3FFFFF  Fast RAM        (2 MB)      Zorro II autoconfig
-//  0x400000..0x4FFFFF  RTG VRAM        (reserved; no RTG card on this port)
-//  0x500000..0x57FFFF  Kickstart ROM   (512 KB, loaded from flash or the link)
+//  0x400000..0x4DBFFF  DF0 disk image  (raw ADF, uploaded by the master)
+//  0x500000..0x57FFFF  Kickstart ROM   (512 KB, uploaded by the master)
 //  0x580000..0x583FFF  DF0 MFM track   (16 KB)
-//  0x584000..0x77FFFF  Free (ADF images, slow RAM later)
+//  0x584000..0x6FFFFF  Free (slow RAM, more drives later)
+//  0x700000..0x77FFFF  Extended ROM    (512 KB, AROS)
 //  0x780000..0x79FFFF  68000 opcode table scratch (128 KB, boot only)
 //  0x7A0000..0x7FEFFF  Free
-//  0x7FF000..0x7FF00B  Boot state (survives resets only)
+//  0x7FF000..0x7FF0FF  Fault record (survives resets only)
+//  0x7FF100..0x7FF13F  Upload record: what the master uploaded (link_pump.c)
 #define BOARD_MAP_CHIPRAM_OFFSET   0x000000u
 #define BOARD_MAP_FAST_RAM_OFFSET  0x200000u
 #define BOARD_MAP_RTG_VRAM_OFFSET  0x400000u
 #define BOARD_MAP_ROM_OFFSET       0x500000u
+#define BOARD_MAP_DF0_ADF_OFFSET   0x400000u
+#define BOARD_MAP_EXT_ROM_OFFSET   0x700000u
+#define BOARD_MAP_UPLOAD_REC_OFFSET 0x7FF100u
 #define BOARD_MAP_DF0_OFFSET       0x580000u
 #define BOARD_MAP_OPCODE_BUILD_OFFSET 0x780000u
 #define BOARD_MAP_BOOT_STATE_OFFSET 0x7FF000u

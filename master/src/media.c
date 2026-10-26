@@ -1,0 +1,181 @@
+/*
+ * frank-amiga — master: Kickstart and disks from the microSD to the slave.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * Configuration: 0:/amiga/frank-amiga.ini, lines of key=path:
+ *   kick=/amiga/kick/kick13.rom     Kickstart (256 or 512 KB)
+ *   ext=/amiga/kick/aros-ext.bin    optional extended ROM (AROS)
+ *   df0=/amiga/adf/workbench.adf    optional disk in DF0
+ * Uploads go over the link (link_proto.h LINK_OP_UPLOAD_*) with the stream
+ * paused; BOOT then makes the slave restart from them.
+ */
+#include "media.h"
+
+#include <stdio.h>
+#include <string.h>
+
+#include "pico/stdlib.h"
+#include "ff.h"
+
+#include "link_proto.h"
+#include "stream.h"
+
+#define INI_PATH "0:/amiga/frank-amiga.ini"
+
+static link_session_t *sess;
+static FATFS fs;
+static bool mounted;
+static uint8_t buf[LINK_UPLOAD_CHUNK] __attribute__((aligned(4)));
+
+media_config_t media_config;
+
+bool media_mount(void) {
+    if (mounted) return true;
+    FRESULT r = f_mount(&fs, "0:", 1);
+    if (r != FR_OK) { printf("media: no microSD (%d)\n", r); return false; }
+    mounted = true;
+    return true;
+}
+
+/* Bitwise CRC-32 (IEEE), resumable: same result as link_crc32(). */
+static uint32_t crc32_update(uint32_t crc, const uint8_t *p, uint32_t n) {
+    crc = ~crc;
+    while (n--) {
+        crc ^= *p++;
+        for (int b = 0; b < 8; b++) crc = (crc >> 1) ^ (0xEDB88320u & -(crc & 1u));
+    }
+    return ~crc;
+}
+
+static bool ctrl(uint16_t op, uint32_t a0, uint32_t a1) {
+    return link_m_send_ctrl(sess, op, a0, a1, NULL, 0) && link_m_recv_ctrl(sess) &&
+           link_rx_hdr(sess)->op == (uint16_t)(op | 1u);
+}
+
+bool media_upload(uint32_t target, const char *path) {
+    if (!media_mount()) return false;
+    /* A running slave first parks its emulation at a frame boundary (up to
+     * a frame) before it answers; the stream's 20 ms is too tight. */
+    const uint32_t saved_timeout = sess->handshake_timeout_us;
+    sess->handshake_timeout_us = 200000;
+    FIL f;
+    if (f_open(&f, path, FA_READ) != FR_OK) {
+        printf("media: cannot open %s\n", path);
+        return false;
+    }
+    const uint32_t size = (uint32_t)f_size(&f);
+    if (!ctrl(LINK_OP_UPLOAD_BEGIN, target, size) || !link_rx_hdr(sess)->arg0) {
+        printf("media: slave refused %s (%lu bytes)\n", path, (unsigned long)size);
+        f_close(&f);
+        sess->handshake_timeout_us = saved_timeout;
+        return false;
+    }
+    uint32_t crc = 0, off = 0;
+    const uint64_t t0 = time_us_64();
+    bool ok = true;
+    while (ok && off < size) {
+        UINT got = 0;
+        const uint32_t want = size - off < sizeof buf ? size - off : sizeof buf;
+        ok = f_read(&f, buf, want, &got) == FR_OK && got == want;
+        if (!ok) break;
+        crc = crc32_update(crc, buf, got);
+        const uint32_t n = (got + 3u) & ~3u;          /* whole words */
+        for (uint32_t i = got; i < n; i++) buf[i] = 0;
+        ok = link_m_send_ctrl(sess, LINK_OP_UPLOAD_CHUNK, off, n, NULL, 0) &&
+             link_m_bulk_send(sess, buf, n) && link_m_recv_ctrl(sess) &&
+             link_rx_hdr(sess)->op == (LINK_OP_UPLOAD_CHUNK | 1u) &&
+             link_rx_hdr(sess)->arg0;
+        off += got;
+    }
+    f_close(&f);
+    ok = ok && ctrl(LINK_OP_UPLOAD_END, crc, 0) && link_rx_hdr(sess)->arg1;
+    printf("media: %s -> slave (%lu bytes, crc %08lx) %s in %lu ms\n", path,
+           (unsigned long)size, (unsigned long)crc, ok ? "ok" : "FAILED",
+           (unsigned long)((time_us_64() - t0) / 1000u));
+    sess->handshake_timeout_us = saved_timeout;
+    return ok;
+}
+
+static void trim(char *s) {
+    size_t n = strlen(s);
+    while (n && (s[n - 1] == '\r' || s[n - 1] == '\n' || s[n - 1] == ' ')) s[--n] = 0;
+}
+
+static void prefix_path(char *dst, size_t cap, const char *v) {
+    snprintf(dst, cap, "%s%s", v[0] == '0' && v[1] == ':' ? "" : "0:", v);
+}
+
+bool media_load_config(void) {
+    memset(&media_config, 0, sizeof media_config);
+    if (!media_mount()) return false;
+    FIL f;
+    if (f_open(&f, INI_PATH, FA_READ) != FR_OK) {
+        printf("media: no %s\n", INI_PATH);
+        return false;
+    }
+    char line[160];
+    while (f_gets(line, sizeof line, &f)) {
+        trim(line);
+        char *eq = strchr(line, '=');
+        if (!eq || line[0] == '#' || line[0] == ';') continue;
+        *eq = 0;
+        const char *k = line, *v = eq + 1;
+        if (!strcmp(k, "kick")) prefix_path(media_config.kick, sizeof media_config.kick, v);
+        else if (!strcmp(k, "ext")) prefix_path(media_config.ext, sizeof media_config.ext, v);
+        else if (!strcmp(k, "df0")) prefix_path(media_config.df0, sizeof media_config.df0, v);
+    }
+    f_close(&f);
+    printf("media: kick=%s ext=%s df0=%s\n", media_config.kick, media_config.ext,
+           media_config.df0);
+    return media_config.kick[0] != 0;
+}
+
+bool media_boot(void) {
+    if (!media_config.kick[0]) return false;
+    stream_stop();
+    bool ok = media_upload(LINK_UP_ROM, media_config.kick);
+    if (ok && media_config.ext[0]) ok = media_upload(LINK_UP_EXT, media_config.ext);
+    if (ok && media_config.df0[0]) media_upload(LINK_UP_DF0, media_config.df0);
+    if (ok) ok = ctrl(LINK_OP_BOOT, 0, 0);
+    printf("media: boot %s\n", ok ? "sent" : "FAILED");
+    return ok;
+}
+
+bool media_insert_df0(const char *path) {
+    char p[128];
+    prefix_path(p, sizeof p, path);
+    stream_stop();
+    const bool ok = media_upload(LINK_UP_DF0, p) && ctrl(LINK_OP_INSERT, 0, 1);
+    stream_start();
+    if (ok) snprintf(media_config.df0, sizeof media_config.df0, "%s", p);
+    return ok;
+}
+
+/* Bench helper: save `size` bytes of master PSRAM at `offset` as a file. */
+bool media_sdput(uint32_t offset, uint32_t size, const char *path) {
+    if (!media_mount()) return false;
+    char p[128];
+    prefix_path(p, sizeof p, path);
+    /* Create the parent directories. */
+    for (char *q = p + 3; (q = strchr(q, '/')); q++) {
+        *q = 0;
+        f_mkdir(p);
+        *q = '/';
+    }
+    FIL f;
+    if (f_open(&f, p, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
+        printf("media: cannot create %s\n", p);
+        return false;
+    }
+    /* Uncached alias: the bench writes this area over SWD. */
+    const uint8_t *src = (const uint8_t *)(0x15000000u + offset);
+    UINT put = 0;
+    const bool ok = f_write(&f, src, size, &put) == FR_OK && put == size;
+    f_close(&f);
+    printf("media: wrote %lu bytes to %s, crc %08lx %s\n", (unsigned long)size, p,
+           (unsigned long)crc32_update(0, src, size), ok ? "ok" : "FAILED");
+    return ok;
+}
+
+void media_init(link_session_t *s) { sess = s; }
