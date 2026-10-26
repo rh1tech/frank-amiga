@@ -15,6 +15,10 @@
 
 // Memory.c's state.
 extern uint8_t *chip_ram;
+uint8_t *chip_bank[CHIP_BANKS];
+#ifdef CHIP_BANK_PROFILE
+uint32_t chip_bank_hits[CHIP_BANKS];
+#endif
 extern const uint8_t *rom_base;
 extern uint32_t rom_size;
 extern const uint8_t *chip_fetch_page[];
@@ -39,6 +43,86 @@ void memory_set_ext_rom(const uint8_t *data) {
     memory_map_pages();
 }
 
+// frank-amiga: chip RAM banks. The first CHIP_SRAM_BANKS 64 KB banks live in
+// SRAM, the rest in PSRAM at their usual place.
+#ifndef CHIP_SRAM_BANKS
+#define CHIP_SRAM_BANKS 0u
+#endif
+#if CHIP_SRAM_BANKS
+static uint8_t sram_chip[CHIP_SRAM_BANKS][0x10000] __attribute__((aligned(4)));
+static uint8_t sram_owner[CHIP_SRAM_BANKS];
+#endif
+static void memory_init_banks(void) {
+    for (uint32_t b = 0; b < CHIP_BANKS; ++b)
+        chip_bank[b] = chip_ram + (b << CHIP_BANK_SHIFT);
+#ifndef CHIP_SRAM_FIRST
+#define CHIP_SRAM_FIRST 0u
+#endif
+#if CHIP_SRAM_BANKS
+    for (uint32_t b = 0; b < CHIP_SRAM_BANKS; ++b) {
+        chip_bank[CHIP_SRAM_FIRST + b] = sram_chip[b];
+        sram_owner[b] = (uint8_t)(CHIP_SRAM_FIRST + b);
+    }
+#endif
+}
+
+#if CHIP_SRAM_BANKS
+/* Promote chip RAM bank `bank` into the SRAM slot now holding `victim`:
+ * the victim's contents go home to PSRAM, the bank's come into SRAM, and the
+ * bank table and the CPU's fetch pages follow. Core 0 only, between slices
+ * (nothing else touches chip RAM). ~7 ms: 64 KB each way through PSRAM. */
+static void bank_swap(uint32_t slot, uint32_t bank) {
+    const uint32_t victim = sram_owner[slot];
+    uint8_t *victim_home = chip_ram + (victim << CHIP_BANK_SHIFT);
+    uint8_t *bank_home = chip_ram + (bank << CHIP_BANK_SHIFT);
+    memcpy(victim_home, sram_chip[slot], 0x10000u);
+    memcpy(sram_chip[slot], bank_home, 0x10000u);
+    chip_bank[victim] = victim_home;
+    chip_bank[bank] = sram_chip[slot];
+    sram_owner[slot] = (uint8_t)bank;
+    chip_fetch_page[victim] = victim_home;
+    chip_fetch_page[bank] = sram_chip[slot];
+}
+#endif
+
+/* Bank heat, sampled once per frame by the caller (main.c): where the CPU
+ * runs and where the chipset's DMA points. Every BANK_PERIOD frames the
+ * hottest PSRAM bank replaces the coolest SRAM one if it is clearly hotter. */
+#define BANK_PERIOD 50u
+static uint32_t bank_heat[CHIP_BANKS];
+uint32_t chip_bank_swaps;
+
+void chip_bank_sample(const uint32_t *addrs, const uint32_t *weights, int n) {
+#if CHIP_SRAM_BANKS
+    static uint32_t frames;
+    for (int i = 0; i < n; ++i)
+        bank_heat[(addrs[i] & CHIPTOP) >> CHIP_BANK_SHIFT] += weights[i];
+    if (++frames < BANK_PERIOD)
+        return;
+    frames = 0;
+    uint32_t hot = 0, hot_heat = 0, cool_slot = 0, cool_heat = ~0u;
+    for (uint32_t b = 0; b < CHIP_BANKS; ++b) {
+        bool in_sram = false;
+        for (uint32_t s = 0; s < CHIP_SRAM_BANKS; ++s) {
+            if (sram_owner[s] == b) {
+                in_sram = true;
+                if (bank_heat[b] < cool_heat) { cool_heat = bank_heat[b]; cool_slot = s; }
+            }
+        }
+        if (!in_sram && bank_heat[b] > hot_heat) { hot_heat = bank_heat[b]; hot = b; }
+    }
+    /* Hysteresis: only when the newcomer is clearly hotter. */
+    if (hot_heat > cool_heat + cool_heat / 2u + BANK_PERIOD) {
+        bank_swap(cool_slot, hot);
+        chip_bank_swaps++;
+    }
+    for (uint32_t b = 0; b < CHIP_BANKS; ++b)
+        bank_heat[b] >>= 1;             /* decay: recent frames count most */
+#else
+    (void)addrs; (void)weights; (void)n;
+#endif
+}
+
 #define PAGE_SHIFT 16
 #define PAGE_COUNT (0x1000000u >> PAGE_SHIFT)
 
@@ -49,7 +133,7 @@ static void memory_map_pages(void) {
         const uint32_t a = p << PAGE_SHIFT;
         const uint8_t *mem = NULL;
         if (a <= CHIPTOP) {
-            mem = chip_ram + a;
+            mem = chip_bank[a >> CHIP_BANK_SHIFT];
         } else if (a - 0x200000u < fast_ram_size) {
             mem = chip_ram + a;     // Fast RAM follows chip RAM in PSRAM
         } else if (a >= 0xE00000u && a < 0xE80000u && ext_rom_base) {
@@ -65,6 +149,7 @@ static void memory_map_pages(void) {
 
 void memory_init(void) {
     chip_ram  = (uint8_t *)(BOARD_CHIPRAM_BASE + PSRAM_CHIPRAM_OFFSET);
+    memory_init_banks();
 
     // ROM lives in flash; the user must place the Kickstart binary at
     // flash offset 0x200000 (i.e. absolute address ROM_FLASH_BASE).
@@ -115,7 +200,8 @@ int memory_set_rom(const uint8_t *data, uint32_t size) {
 
 void memory_clear_chipram(void) {
     // Leave longword at 0x000000 (Guru indicator) intact; clear from 4 up
-    memset(chip_ram + 4, 0, PSRAM_CHIPRAM_SIZE - 4);
+    for (uint32_t b = 0; b < CHIP_BANKS; ++b)
+        memset(chip_bank[b] + (b ? 0 : 4), 0, 0x10000u - (b ? 0 : 4));
 }
 
 // Autoconfig placed a board at base (Expansion.c), or the reset line

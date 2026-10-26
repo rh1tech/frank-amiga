@@ -46,6 +46,45 @@ extern unsigned char low16Meg[16777216];
 #define CHIPRAM_BASE_PTR  ((uint8_t*)low16Meg)
 #endif
 
+// ── Chip RAM banks (frank-amiga) ─────────────────────────────────────────
+// Chip RAM is addressed through a table of 64 KB banks, so the hottest can
+// live in SRAM and the rest in PSRAM (MemoryBoot.c). Every chipset DMA and
+// CPU access goes through chip_ptr() / CHIPW(); addresses wrap at CHIPTOP.
+#define CHIP_BANK_SHIFT 16u
+#define CHIP_BANKS ((CHIPTOP + 1u) >> CHIP_BANK_SHIFT)
+#ifdef PICO_BUILD
+extern uint8_t *chip_bank[CHIP_BANKS];
+#ifdef CHIP_BANK_PROFILE
+extern uint32_t chip_bank_hits[CHIP_BANKS];
+#endif
+static inline uint8_t *chip_ptr(uint32_t a) {
+    a &= CHIPTOP;
+#ifdef CHIP_BANK_PROFILE
+    chip_bank_hits[a >> CHIP_BANK_SHIFT]++;
+#endif
+    return chip_bank[a >> CHIP_BANK_SHIFT] + (a & 0xFFFFu);
+}
+#else
+#ifdef CHIP_RANGE_CHECK
+#include <stdio.h>
+static inline uint8_t *chip_ptr(uint32_t a) {
+    static unsigned reported;
+    if (a > CHIPTOP && reported < 10) { reported++; fprintf(stderr, "CHIP OOR %08x\n", a); }
+    return &low16Meg[a & CHIPTOP];
+}
+#else
+static inline uint8_t *chip_ptr(uint32_t a) { return &low16Meg[a & CHIPTOP]; }
+#endif
+#endif
+// Once per frame: chip RAM addresses in use and their weights; moves hot
+// banks into SRAM now and then (MemoryBoot.c).
+void chip_bank_sample(const uint32_t *addrs, const uint32_t *weights, int n);
+extern uint32_t chip_bank_swaps;
+
+// Word i of chip RAM (byte address 2i), as an lvalue, host-endian as the
+// chipset code expects (it swaps bytes itself).
+#define CHIPW(i) (*(uint16_t *)chip_ptr((uint32_t)(i) << 1))
+
 // ── public API ───────────────────────────────────────────────────────────
 // Called once at startup; clears chip RAM and mirrors ROM if needed.
 void memory_init(void);
@@ -74,7 +113,9 @@ extern const uint8_t *chip_fetch_page[0x100];
 static inline unsigned int chipFetchLongInline(unsigned int address) {
     const uint8_t *page =
         address < 0x1000000u ? chip_fetch_page[address >> 16] : (const uint8_t *)0;
-    if (page) {
+    // frank-amiga: pages need not be contiguous any more (chip RAM banks),
+    // so a long straddling two takes the slow path.
+    if (page && (address & 0xFFFFu) <= 0xFFFCu) {
         uint32_t v;
         __builtin_memcpy(&v, page + (address & 0xFFFFu), sizeof(v));
         return __builtin_bswap32(v);

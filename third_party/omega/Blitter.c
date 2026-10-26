@@ -80,6 +80,7 @@
  */
 
 
+#include "Memory.h"   /* frank-amiga: CHIPW() */
 #include "Blitter.h"
 
 
@@ -163,7 +164,6 @@ void blitter_execute(Chipset_t* chipset){
             int length = chipset->bltsizv;
             int inc1 = chipset->bltamod; // 4(dy - dx)
             int D = (int16_t)chipset->bltapt;// start value of 4dy - 2dx
-            uint16_t* chipramW = internal.chipramW;
             
             int planeAddr = chipset->bltcpt & 0x1FFFFE;//word address
             
@@ -198,11 +198,11 @@ void blitter_execute(Chipset_t* chipset){
 
                         if (!oneDot || i != lastRow) {
                             lastRow = i;
-                            uint16_t pixel = chipramW[addr];
+                            uint16_t pixel = CHIPW(addr);
                             pixel = (pixel <<8) | (pixel >>8);
                             pixel = logicFunction(minterm,0x8000 >> (offset&15),pattern,pixel);
                             pixel = (pixel <<8) | (pixel >>8);
-                            chipramW[addr] = pixel;
+                            CHIPW(addr) = pixel;
                         }
 
                         if(D>0){
@@ -224,11 +224,11 @@ void blitter_execute(Chipset_t* chipset){
 
                         if (!oneDot || i != lastRow) {
                             lastRow = i;
-                            uint16_t pixel = chipramW[addr];
+                            uint16_t pixel = CHIPW(addr);
                             pixel = (pixel <<8) | (pixel >>8);
                             pixel = logicFunction(minterm,0x8000 >> (offset&15),pattern,pixel);
                             pixel = (pixel <<8) | (pixel >>8);
-                            chipramW[addr] = pixel;
+                            CHIPW(addr) = pixel;
                         }
 
                         if(D>0){
@@ -252,11 +252,11 @@ void blitter_execute(Chipset_t* chipset){
 
                         if (!oneDot || i != lastRow) {
                             lastRow = i;
-                            uint16_t pixel = chipramW[addr];
+                            uint16_t pixel = CHIPW(addr);
                             pixel = (pixel <<8) | (pixel >>8);
                             pixel = logicFunction(minterm,0x0001 << (offset&15),pattern,pixel);
                             pixel = (pixel <<8) | (pixel >>8);
-                            chipramW[addr] = pixel;
+                            CHIPW(addr) = pixel;
                         }
 
                         if(D>0){
@@ -279,11 +279,11 @@ void blitter_execute(Chipset_t* chipset){
 
                         if (!oneDot || i != lastRow) {
                             lastRow = i;
-                            uint16_t pixel = chipramW[addr];
+                            uint16_t pixel = CHIPW(addr);
                             pixel = (pixel <<8) | (pixel >>8);
                             pixel = logicFunction(minterm,0x8000 >> (offset&15),pattern,pixel);
                             pixel = (pixel <<8) | (pixel >>8);
-                            chipramW[addr] = pixel;
+                            CHIPW(addr) = pixel;
                         }
 
                         if(D>0){
@@ -305,11 +305,11 @@ void blitter_execute(Chipset_t* chipset){
 
                         if (!oneDot || d != lastRow) {
                             lastRow = d;
-                            uint16_t pixel = chipramW[addr];
+                            uint16_t pixel = CHIPW(addr);
                             pixel = (pixel <<8) | (pixel >>8);
                             pixel = logicFunction(minterm,0x8000 >> (offset&15),pattern,pixel);
                             pixel = (pixel <<8) | (pixel >>8);
-                            chipramW[addr] = pixel;
+                            CHIPW(addr) = pixel;
                         }
 
                         if(D>0){
@@ -333,11 +333,11 @@ void blitter_execute(Chipset_t* chipset){
 
                         if (!oneDot || d != lastRow) {
                             lastRow = d;
-                            uint16_t pixel = chipramW[addr];
+                            uint16_t pixel = CHIPW(addr);
                             pixel = (pixel <<8) | (pixel >>8);
                             pixel = logicFunction(minterm,0x0001 << (offset&15),pattern,pixel);
                             pixel = (pixel <<8) | (pixel >>8);
-                            chipramW[addr] = pixel;
+                            CHIPW(addr) = pixel;
                         }
 
                         if(D>0){
@@ -359,11 +359,11 @@ void blitter_execute(Chipset_t* chipset){
 
                         if (!oneDot || d != lastRow) {
                             lastRow = d;
-                            uint16_t pixel = chipramW[addr];
+                            uint16_t pixel = CHIPW(addr);
                             pixel = (pixel <<8) | (pixel >>8);
                             pixel = logicFunction(minterm,0x8000 >> (offset&15),pattern,pixel);
                             pixel = (pixel <<8) | (pixel >>8);
-                            chipramW[addr] = pixel;
+                            CHIPW(addr) = pixel;
                         }
 
                         if(D>0){
@@ -387,11 +387,11 @@ void blitter_execute(Chipset_t* chipset){
 
                         if (!oneDot || d != lastRow) {
                             lastRow = d;
-                            uint16_t pixel = chipramW[addr];
+                            uint16_t pixel = CHIPW(addr);
                             pixel = (pixel <<8) | (pixel >>8);
                             pixel = logicFunction(minterm,0x0001 << (offset&15),pattern,pixel);
                             pixel = (pixel <<8) | (pixel >>8);
-                            chipramW[addr] = pixel;
+                            CHIPW(addr) = pixel;
                         }
 
                         if(D>0){
@@ -489,7 +489,7 @@ void blitter_execute(Chipset_t* chipset){
                     
                     //Channel A
                     if(useMask & 8){
-                        adat = internal.chipramW[apt];
+                        adat = CHIPW(apt);
                         adat = adat << 8 | adat >> 8;
                         apt +=xIncrement;
                     }
@@ -497,7 +497,7 @@ void blitter_execute(Chipset_t* chipset){
                     
                     //Channel B
                     if(useMask & 4){
-                        bdat = internal.chipramW[bpt];
+                        bdat = CHIPW(bpt);
                         bdat = bdat << 8 | bdat >> 8;
                         bpt +=xIncrement;
                     }
@@ -505,7 +505,7 @@ void blitter_execute(Chipset_t* chipset){
                     
                     //Channel C
                     if(useMask & 2){
-                        cdat = internal.chipramW[cpt];
+                        cdat = CHIPW(cpt);
                         cdat = cdat << 8 | cdat >> 8;
                         cpt +=xIncrement;
                     }
@@ -566,7 +566,7 @@ void blitter_execute(Chipset_t* chipset){
                     if(useMask & 1){
                         
                         channelD = channelD << 8 | channelD >>8;
-                        internal.chipramW[dpt] = channelD;
+                        CHIPW(dpt) = channelD;
                         dpt +=xIncrement;
                     }
                     

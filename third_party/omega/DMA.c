@@ -732,13 +732,13 @@ static void hiresDisplayPrefetch(void) {
 
     uint16_t p1 = 0, p2 = 0, p3 = 0, p4 = 0;
     if (internal.bitplaneMask & 0x01)
-        p1 = internal.chipramW[bitplaneLine.pointerAtFetchCompletion[0]];
+        p1 = CHIPW(bitplaneLine.pointerAtFetchCompletion[0]);
     if (internal.bitplaneMask & 0x02)
-        p2 = internal.chipramW[bitplaneLine.pointerAtFetchCompletion[1]];
+        p2 = CHIPW(bitplaneLine.pointerAtFetchCompletion[1]);
     if (internal.bitplaneMask & 0x04)
-        p3 = internal.chipramW[bitplaneLine.pointerAtFetchCompletion[2]];
+        p3 = CHIPW(bitplaneLine.pointerAtFetchCompletion[2]);
     if (internal.bitplaneMask & 0x08)
-        p4 = internal.chipramW[bitplaneLine.pointerAtFetchCompletion[3]];
+        p4 = CHIPW(bitplaneLine.pointerAtFetchCompletion[3]);
 
     hiresPeekedWord(host.rasterRow, host.rasterX, p1, p2, p3, p4);
     host.rasterX += 16;
@@ -1022,7 +1022,7 @@ static void rotatedTailEndOfLine(void) {
         uint16_t p[4] = { 0, 0, 0, 0 };
         for (int n = 0; n < 4; ++n)
             if (tailPlanes & (1u << n))
-                p[n] = internal.chipramW[pt[n] + (uint32_t)i];
+                p[n] = CHIPW(pt[n] + (uint32_t)i);
         hiresPeekedWord(row, x, p[0], p[1], p[2], p[3]);
     }
 }
@@ -1104,7 +1104,7 @@ static inline void loresPlane1Fetch(void);
 // planeN() for an enabled plane inside the fetch window.
 #define FETCH_PLANE(n) do { \
         bitplaneLine.fetchedMask |= 1u << ((n) - 1); \
-        chipset.bpl##n##dat = internal.chipramW[chipset.bpl##n##pt]; \
+        chipset.bpl##n##dat = CHIPW(chipset.bpl##n##pt); \
         chipset.bpl##n##pt += 1; \
     } while (0)
 
@@ -1335,6 +1335,16 @@ static void __attribute__((noinline)) dmaIdleRefresh(void) {
 
 // Inlined into dma_run(): a cache hit is a few compares, no call.
 static inline __attribute__((always_inline)) int dmaIdleUntil(int limit) {
+    // frank-amiga: the two states in which nothing can be skipped (a busy
+    // blitter, a Copper executing rather than waiting) answer "here" with
+    // a couple of loads, as dmaIdleCompute() would. Through the cache they
+    // cost a refresh on every slot (~23 % of the CPU in State of the Art's
+    // blitter-heavy part).
+    if (blitterState != 0 || (chipset.dmaconr & 0x4240) == 0x4240)
+        return internal.hPos;
+    if ((chipset.dmaconr & 0x280) == 0x280 && internal.copperCycle != 4 &&
+        internal.copperCycle != 3)
+        return internal.hPos;
     if (!dmaIdleCacheValid || idleLine != internal.vPos ||
         internal.hPos >= idleHorizon)
         dmaIdleRefresh();
@@ -1383,10 +1393,10 @@ void diskCycle(void){
                 if(floppySync == 1){
                     
                     //chipset.dskbytr &= 0xEFFF;      //clear word sync
-                    CHIPRAM_BASE_PTR[chipset.dskpt & CHIPTOP] = b1;
+                    *chip_ptr(chipset.dskpt & CHIPTOP) = b1;
                     chipset.dskpt += 1;
 
-                    CHIPRAM_BASE_PTR[chipset.dskpt & CHIPTOP] = b2;
+                    *chip_ptr(chipset.dskpt & CHIPTOP) = b2;
                     chipset.dskpt += 1;
                 
                     chipset.dsklen -= 1;
@@ -1491,7 +1501,7 @@ void spriteCycle(void){
         return;
     }
     uint32_t *pt = &chipset.spr0pt + n;
-    uint16_t word = internal.chipramW[*pt];
+    uint16_t word = CHIPW(*pt);
     word = (uint16_t)((word << 8) | (word >> 8));   // chip RAM is byte-swapped
     *pt += 1;
     const unsigned reg = fetch == SPRITE_FETCH_CONTROL ? SPR0POS : SPR0DATA;
@@ -1643,7 +1653,7 @@ void plane6(void){
     chipset.bpl6dat = 0;
     if( (internal.bitplaneMask & 0x20)  == 0x20){
         markBitplaneFetched(6);
-        uint16_t* p = &internal.chipramW[chipset.bpl6pt];
+        uint16_t* p = &CHIPW(chipset.bpl6pt);
         chipset.bpl6pt +=1;
         chipset.bpl6dat = *p;
         return;
@@ -1663,7 +1673,7 @@ void plane5(void){
     chipset.bpl5dat = 0;
     if( (internal.bitplaneMask & 0x10)  == 0x10){
         markBitplaneFetched(5);
-        uint16_t* p = &internal.chipramW[chipset.bpl5pt];
+        uint16_t* p = &CHIPW(chipset.bpl5pt);
         chipset.bpl5pt +=1;
         chipset.bpl5dat = *p;
         return;
@@ -1726,7 +1736,7 @@ static inline void loresPlane1Fetch(void){
     if( (internal.bitplaneMask & 0x1)  == 0x1){
         markBitplaneFetched(1);
         host.displayIsLores = 1;
-        uint16_t* p = &internal.chipramW[chipset.bpl1pt];
+        uint16_t* p = &CHIPW(chipset.bpl1pt);
         chipset.bpl1pt +=1;
         chipset.bpl1dat = *p;
     }
@@ -1775,7 +1785,7 @@ void plane4(){
     chipset.bpl4dat = 0;
     if( (internal.bitplaneMask & 0x8)  == 0x8){
         markBitplaneFetched(4);
-        uint16_t* p = &internal.chipramW[chipset.bpl4pt];
+        uint16_t* p = &CHIPW(chipset.bpl4pt);
         chipset.bpl4pt +=1;
         chipset.bpl4dat = *p;
         return;
@@ -1795,7 +1805,7 @@ void plane2(){
     chipset.bpl2dat = 0;
     if( (internal.bitplaneMask & 0x2)  == 0x2){
         markBitplaneFetched(2);
-        uint16_t* p = &internal.chipramW[chipset.bpl2pt];
+        uint16_t* p = &CHIPW(chipset.bpl2pt);
         chipset.bpl2pt +=1;
         chipset.bpl2dat = *p;
         return;
@@ -1815,7 +1825,7 @@ void plane3(){
     chipset.bpl3dat = 0;
     if( (internal.bitplaneMask & 0x4)  == 0x4){
         markBitplaneFetched(3);
-        uint16_t* p = &internal.chipramW[chipset.bpl3pt];
+        uint16_t* p = &CHIPW(chipset.bpl3pt);
         chipset.bpl3pt +=1;
         chipset.bpl3dat = *p;
         return;
@@ -1848,7 +1858,7 @@ static inline void hiresPlane1Fetch(void){
     if( (internal.bitplaneMask & 0x1)  == 0x1){
         markBitplaneFetched(1);
         host.displayIsLores = 0;
-        uint16_t* p = &internal.chipramW[chipset.bpl1pt];
+        uint16_t* p = &CHIPW(chipset.bpl1pt);
         chipset.bpl1pt +=1;
         chipset.bpl1dat = *p;
     }
@@ -1929,7 +1939,7 @@ int copperExecute(){
         
     switch(internal.copperCycle){
         case 0:
-            internal.IR1 = internal.chipramW[internal.copperPC];
+            internal.IR1 = CHIPW(internal.copperPC);
             internal.IR1 = (internal.IR1 <<8) | (internal.IR1 >>8);
             internal.copperPC += 1;
             internal.copperCycle = 1;
@@ -1941,7 +1951,7 @@ int copperExecute(){
             break;
             
         case 1:
-            internal.IR2 = internal.chipramW[internal.copperPC];
+            internal.IR2 = CHIPW(internal.copperPC);
             internal.copperPC += 1;
             
             internal.IR1 = (internal.IR1 >> 1) & 255;   // divide by 2 and mask off bad bits
@@ -1964,7 +1974,7 @@ int copperExecute(){
             break;
             
         case 2:
-            internal.IR2 = internal.chipramW[internal.copperPC];
+            internal.IR2 = CHIPW(internal.copperPC);
             internal.copperPC += 1;
             
             internal.IR2 = (internal.IR2 <<8) | (internal.IR2 >>8);
@@ -2134,7 +2144,7 @@ int blitterCopyCycle(){
             
             //Channel A
             if(internal.useMask & 8){
-                chipset.bltadat = internal.chipramW[internal.apt];
+                chipset.bltadat = CHIPW(internal.apt);
                 chipset.bltadat = chipset.bltadat << 8 | chipset.bltadat >> 8;
                 internal.apt +=internal.xIncrement;
             }
@@ -2142,7 +2152,7 @@ int blitterCopyCycle(){
             
             //Channel B
             if(internal.useMask & 4){
-                chipset.bltbdat = internal.chipramW[internal.bpt];
+                chipset.bltbdat = CHIPW(internal.bpt);
                 chipset.bltbdat = chipset.bltbdat << 8 | chipset.bltbdat >> 8;
                 internal.bpt +=internal.xIncrement;
             }
@@ -2150,7 +2160,7 @@ int blitterCopyCycle(){
             
             //Channel C
             if(internal.useMask & 2){
-                chipset.bltcdat = internal.chipramW[internal.cpt];
+                chipset.bltcdat = CHIPW(internal.cpt);
                 chipset.bltcdat = chipset.bltcdat << 8 | chipset.bltcdat >> 8;
                 internal.cpt +=internal.xIncrement;
             }
@@ -2195,7 +2205,7 @@ int blitterCopyCycle(){
             if(internal.useMask & 1){
                 
                 channelD = channelD << 8 | channelD >>8;
-                internal.chipramW[internal.dpt] = channelD;
+                CHIPW(internal.dpt) = channelD;
                 internal.dpt +=internal.xIncrement;
             }
             

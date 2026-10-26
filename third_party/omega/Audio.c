@@ -19,6 +19,7 @@
 //  runs on core 1, off the emulator's core.
 //
 
+#include "Memory.h"   /* frank-amiga: CHIPW() */
 #include "Audio.h"
 #include "Chipset.h"
 #include "VideoStandard.h"
@@ -147,7 +148,7 @@ static void nextSample(int c) {
     }
     if (a->mode == 1) {
         // chip RAM words are stored host-endian: swap to the Amiga's order
-        const uint16_t w = internal.chipramW[a->ptr & 0xFFFFFu];
+        const uint16_t w = CHIPW(a->ptr & 0xFFFFFu);
         a->word = (uint16_t)(w << 8 | w >> 8);
         a->ptr += 1;
         if (--a->len == 0)

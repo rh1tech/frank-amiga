@@ -63,7 +63,9 @@ target_compile_definitions(frank-amiga-slave PRIVATE ${FRANK_DEFINITIONS}
     OMEGA_FAST_RAM=0
     OMEGA_RTG=0
     OMEGA_REALTIME=0
-    OMEGA_HOT_OPCODES_IN_RAM=0
+    OMEGA_HOT_OPCODES_IN_RAM=1
+    CHIP_SRAM_BANKS=4u           # chip RAM 0x000000-0x03FFFF in SRAM
+    ${FRANK_EXTRA_DEFS}
     OMEGA_CPU_CYCLES_PER_SLOT=2
     OMEGA_CPU_SLICE_SLOTS=8
     RING_WORDS=16384u
@@ -81,8 +83,7 @@ target_link_libraries(frank-amiga-slave
 # Console on UART1 (J4).
 pico_enable_stdio_uart(frank-amiga-slave 1)
 pico_enable_stdio_usb(frank-amiga-slave 0)
-# The whole slave image runs from SRAM (crt0 copies it there): the code is
-# ~330 KB and the slave has nothing else to put in its 520 KB, so the XIP
-# cache is left to the Kickstart ROM alone.
-pico_set_binary_type(frank-amiga-slave copy_to_ram)
+# Hot code in SRAM (memmap_slave.ld + m68khot.h), cold Musashi handlers in
+# flash, which leaves SRAM for chip RAM banks (MemoryBoot.c).
+pico_set_linker_script(frank-amiga-slave ${CMAKE_CURRENT_LIST_DIR}/memmap_slave.ld)
 pico_add_extra_outputs(frank-amiga-slave)

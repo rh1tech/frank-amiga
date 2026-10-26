@@ -77,6 +77,28 @@ static inline void ram_write_long(uint8_t *p, uint32_t v) {
     memcpy(p, &v, sizeof(v));
 }
 
+// frank-amiga: chip RAM lives in 64 KB banks (chip_bank[], Memory.h), some
+// in SRAM and the rest in PSRAM. A word or long that straddles two banks
+// (an odd or 0xFFFE-0xFFFF offset) is assembled from bytes.
+static inline uint16_t chip_read_word(uint32_t a) {
+    if ((a & 0xFFFFu) <= 0xFFFEu) return ram_read_word(chip_ptr(a));
+    return (uint16_t)(*chip_ptr(a) << 8 | *chip_ptr(a + 1u));
+}
+static inline uint32_t chip_read_long(uint32_t a) {
+    if ((a & 0xFFFFu) <= 0xFFFCu) return ram_read_long(chip_ptr(a));
+    return (uint32_t)chip_read_word(a) << 16 | chip_read_word(a + 2u);
+}
+static inline void chip_write_word(uint32_t a, uint16_t v) {
+    if ((a & 0xFFFFu) <= 0xFFFEu) { ram_write_word(chip_ptr(a), v); return; }
+    *chip_ptr(a) = (uint8_t)(v >> 8);
+    *chip_ptr(a + 1u) = (uint8_t)v;
+}
+static inline void chip_write_long(uint32_t a, uint32_t v) {
+    if ((a & 0xFFFFu) <= 0xFFFCu) { ram_write_long(chip_ptr(a), v); return; }
+    chip_write_word(a, (uint16_t)(v >> 16));
+    chip_write_word(a + 2u, (uint16_t)v);
+}
+
 // ── ROM helper: 256 KB ROM mirrored to fill 512 KB slot ──────────────────
 static inline uint32_t rom_addr(uint32_t amiga_addr) {
     uint32_t offset = amiga_addr - 0xF80000u;
@@ -124,7 +146,7 @@ static inline uint32_t custom_mirror(uint32_t address) {
 // ── chipReadByte ──────────────────────────────────────────────────────────
 unsigned int chipReadByte(unsigned int address) {
     // Chip RAM is by far the most common target; test it first.
-    if (address <= CHIPTOP) return chip_ram[address];
+    if (address <= CHIPTOP) return *chip_ptr(address);
     if (IN_FAST_RAM(address)) return chip_ram[address];
     // ROM
     if (address >= 0xF80000u) {
@@ -151,12 +173,12 @@ unsigned int chipReadByte(unsigned int address) {
     if (address >= 0xBFD000u) return CIARead(&CIAB, (address - 0xBFD000u) >> 8);
     // Chip RAM (2 MB, address wraps)
     address &= CHIPTOP;
-    return chip_ram[address];
+    return *chip_ptr(address);
 }
 
 // ── chipReadWord ─────────────────────────────────────────────────────────
 unsigned int chipReadWord(unsigned int address) {
-    if (address <= CHIPTOP) return ram_read_word(&chip_ram[address]);
+    if (address <= CHIPTOP) return chip_read_word(address);
     if (IN_FAST_RAM(address)) return ram_read_word(&chip_ram[address]);
     // ROM
     if (address > 0xF7FFFFu) {
@@ -189,12 +211,12 @@ unsigned int chipReadWord(unsigned int address) {
     if (address > 0x1FFFFFu) return 0;
     // Chip RAM
     address &= CHIPTOP;
-    return ram_read_word(&chip_ram[address]);
+    return chip_read_word(address);
 }
 
 // ── chipReadLong ─────────────────────────────────────────────────────────
 unsigned int chipReadLong(unsigned int address) {
-    if (address <= CHIPTOP) return ram_read_long(&chip_ram[address]);
+    if (address <= CHIPTOP) return chip_read_long(address);
     if (IN_FAST_RAM(address)) return ram_read_long(&chip_ram[address]);
     // ROM (and the KickSmash ROM switcher's messages: omega/KickSmash.c)
     if (address > 0xF7FFFFu) {
@@ -230,12 +252,12 @@ unsigned int chipReadLong(unsigned int address) {
     if (address > 0x1FFFFFu) return 0;
     // Chip RAM
     address &= CHIPTOP;
-    return ram_read_long(&chip_ram[address]);
+    return chip_read_long(address);
 }
 
 // ── chipWriteByte ─────────────────────────────────────────────────────────
 void chipWriteByte(unsigned int address, unsigned int value) {
-    if (address <= CHIPTOP) { chip_ram[address] = (uint8_t)value; return; }
+    if (address <= CHIPTOP) { *chip_ptr(address) = (uint8_t)value; return; }
     if (IN_FAST_RAM(address)) {
         if (IN_VRAM(address))
             memory_vram_write(address, value, 1);
@@ -273,13 +295,13 @@ void chipWriteByte(unsigned int address, unsigned int value) {
     // Chip RAM
     if (address > 0x1FFFFFu) return;
     address &= CHIPTOP;
-    chip_ram[address] = (uint8_t)value;
+    *chip_ptr(address) = (uint8_t)value;
 }
 
 // ── chipWriteWord ─────────────────────────────────────────────────────────
 void chipWriteWord(unsigned int address, unsigned int value) {
     if (address <= CHIPTOP) {
-        ram_write_word(&chip_ram[address], (uint16_t)value);
+        chip_write_word(address, (uint16_t)value);
         return;
     }
     if (IN_FAST_RAM(address)) {
@@ -320,13 +342,13 @@ void chipWriteWord(unsigned int address, unsigned int value) {
     // Chip RAM
     if (address > 0x1FFFFFu) return;
     address &= CHIPTOP;
-    ram_write_word(&chip_ram[address], (uint16_t)value);
+    chip_write_word(address, (uint16_t)value);
 }
 
 // ── chipWriteLong ─────────────────────────────────────────────────────────
 void chipWriteLong(unsigned int address, unsigned int value) {
     if (address <= CHIPTOP) {
-        ram_write_long(&chip_ram[address], value);
+        chip_write_long(address, value);
         return;
     }
     if (IN_FAST_RAM(address)) {
@@ -360,7 +382,7 @@ void chipWriteLong(unsigned int address, unsigned int value) {
     if (address > 0x1FFFFFu) return;
     // Chip RAM
     address &= CHIPTOP;
-    ram_write_long(&chip_ram[address], value);
+    chip_write_long(address, value);
 }
 
 // ── Instruction fetch (Musashi prefetch) ─────────────────────────────────

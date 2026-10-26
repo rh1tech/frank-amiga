@@ -1,3 +1,5 @@
 de111260da6577b946fc02ca6ffab79c2898e99d Sun Oct 25 12:43:18 2026 +0100
 Copied from github.com/fboldog/rp2350-amiga omega/ (MPL-2.0), Kick13.h removed (copyrighted ROM).
 Local changes: Floppy.c, m68kops.c include "psram.h" instead of "../src/psram.h".
+Local changes: chip RAM accesses in Audio.c, DMA.c, Blitter.c go through CHIPW()/chip_ptr() (platform Memory.h) so chip RAM can be split into 64 KB banks.
+Local change: DMA.c dmaIdleUntil() early exits (busy blitter / executing Copper).

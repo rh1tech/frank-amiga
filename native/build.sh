@@ -19,7 +19,7 @@ fi
 O=third_party/omega
 $CC -O2 -g -std=gnu11 -include native/sdl_shim.h \
     -Inative -Icommon/amiga -Islave/src/platform -I$O -w \
-    $SDL_FLAGS -DOMEGA_VIDEO_STANDARD=$VD -DP2_DEBUG_BLITS \
+    $SDL_FLAGS -DOMEGA_VIDEO_STANDARD=$VD -DP2_DEBUG_BLITS ${EXTRA_CFLAGS:-} \
     -o "$OUT" native/main_native.c native/host_native.c native/memory_native.c \
     native/hdf_native.c native/kicksmash_native.c \
     slave/src/platform/Planar.c native/Presentation.c $SDL_OBJ \

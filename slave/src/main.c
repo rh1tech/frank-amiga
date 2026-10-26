@@ -145,8 +145,22 @@ static void pace(void) {
     }
 }
 
+/* Where chip RAM is in use this frame, for the SRAM bank promotion. */
+static void sample_banks(void) {
+    uint32_t a[10], w[10];
+    int n = 0;
+    a[n] = m68k_get_reg(NULL, M68K_REG_PC); w[n++] = 8;
+    const int planes = (chipset.bplcon0 >> 12) & 7;
+    const uint32_t *bpl = &chipset.bpl1pt;
+    for (int i = 0; i < planes && i < 6; ++i) { a[n] = bpl[i]; w[n++] = 4; }
+    a[n] = chipset.cop1lc; w[n++] = 2;
+    a[n] = chipset.bltdpt; w[n++] = 4;
+    chip_bank_sample(a, w, n);
+}
+
 void host_frame_paced(void) {
     pace();
+    sample_banks();
     link_input_ev_t ev;
     while (pump_input_pop(&ev)) {
         switch (ev.type) {
@@ -203,14 +217,22 @@ static void __not_in_flash_func(emulation_loop)(void) {
         if (now >= next_report) {
             const uint32_t f = host_frames_emulated;
             printf("emu: %.1f frames/s, link %lu req %lu chunks %lu kwords "
-                   "%lu resyncs, audio drops %lu, pc %06lx\n",
+                   "%lu resyncs, audio drops %lu, bank swaps %lu, pc %06lx\n",
                    (double)(f - last_frames) * 1e6 / (double)(now - next_report + 2000000u),
                    (unsigned long)pump_requests, (unsigned long)pump_chunks,
                    (unsigned long)(pump_words / 1000u), (unsigned long)pump_resyncs,
-                   (unsigned long)hostAudioDrops,
+                   (unsigned long)hostAudioDrops, (unsigned long)chip_bank_swaps,
                    (unsigned long)m68k_get_reg(NULL, M68K_REG_PC));
             last_frames = f;
             next_report = now + 2000000u;
+#ifdef CHIP_BANK_PROFILE
+            printf("banks:");
+            for (uint32_t b = 0; b < CHIP_BANKS; b++) {
+                printf(" %lu", (unsigned long)(chip_bank_hits[b] / 1000u));
+                chip_bank_hits[b] = 0;
+            }
+            printf("\n");
+#endif
         }
     }
 }
