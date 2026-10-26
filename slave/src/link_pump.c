@@ -87,6 +87,7 @@ static uint32_t msg_words(uint32_t h) {
     case MSG_COLOUR:   return 2;
     case MSG_ROW_SAME: return 1;
     case MSG_AUDIO:    return 1 + (h >> 23);
+    case MSG_DPF:      return 1;
     default:           return 0;
     }
 }

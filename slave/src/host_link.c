@@ -370,10 +370,34 @@ static void hostDirectRowEndVideo(int row, int drawn) {
     runFlush();
 }
 
+// frank-amiga: dual playfield. The renderer needs the playfields' relative
+// scroll and priority per row; sent before the row's first DPF block and
+// whenever they change within it (Copper-driven parallax).
+volatile uint32_t host_dpf_rows;
+static int dpf_row = -1;
+static uint32_t dpf_state = ~0u;
+static inline uint32_t dpfBlockFlag(int row) {
+    if (!(chipset.bplcon0 & 0x400))
+        return 0;
+    const int delta = (int)((chipset.bplcon1 >> 4) & 15) - (int)(chipset.bplcon1 & 15);
+    const uint32_t st = ((uint32_t)delta & 31u) | ((uint32_t)(chipset.bplcon2 >> 6) & 1u) << 5;
+    if (row != dpf_row || st != dpf_state) {
+        dpf_row = row;
+        dpf_state = st;
+        runFlush();
+        host_dpf_rows++;
+        const uint32_t msg = MSG_HEADER(MSG_DPF, row, 0, st);
+        hostRowMix2(msg, 0);
+        ringPush(&msg, 1);
+    }
+    return MSG_RUN_DPF;
+}
+
 void hostDirectHires(int row, int x, uint16_t p1, uint16_t p2,
                      uint16_t p3, uint16_t p4) {
     hostDirectSyncPalette();
-    uint32_t *planes = runAppend(MSG_HEADER(MSG_HIRES, row, 0, 0), x, 16, 2);
+    const uint32_t dpf = dpfBlockFlag(row);
+    uint32_t *planes = runAppend(MSG_HEADER(MSG_HIRES, row, 0, 0) | dpf, x, 16, 2);
     planes[0] = p1 | (uint32_t)p2 << 16;
     planes[1] = p3 | (uint32_t)p4 << 16;
     hostRowMix2(planes[0], planes[1]);
@@ -382,8 +406,9 @@ void hostDirectHires(int row, int x, uint16_t p1, uint16_t p2,
 void hostDirectLores(int row, int x, uint16_t p1, uint16_t p2, uint16_t p3,
                      uint16_t p4, uint16_t p5, uint16_t p6, int ham) {
     hostDirectSyncPalette();
+    const uint32_t dpf = ham ? 0 : dpfBlockFlag(row);
     uint32_t *planes =
-        runAppend(MSG_HEADER(MSG_LORES, row, 0, ham ? 1 : 0), x, 32, 3);
+        runAppend(MSG_HEADER(MSG_LORES, row, 0, ham ? 1 : 0) | dpf, x, 32, 3);
     planes[0] = p1 | (uint32_t)p2 << 16;
     planes[1] = p3 | (uint32_t)p4 << 16;
     planes[2] = p5 | (uint32_t)p6 << 16;

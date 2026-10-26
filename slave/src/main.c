@@ -29,6 +29,7 @@
 #include "host_link.h"
 #include "link_pump.h"
 #include "upload.h"
+extern volatile uint32_t host_dpf_rows;
 #include "../omega/Chipset.h"
 #include "../omega/CIA.h"
 #include "../omega/CPU.h"
@@ -219,12 +220,12 @@ static void __not_in_flash_func(emulation_loop)(void) {
         if (now >= next_report) {
             const uint32_t f = host_frames_emulated;
             printf("emu: %.1f frames/s, link %lu req %lu chunks %lu kwords "
-                   "%lu resyncs, audio drops %lu, bank swaps %lu, bplcon0 %04x, pc %06lx\n",
+                   "%lu resyncs, audio drops %lu, bank swaps %lu, bplcon0 %04x, dpf rows %lu, pc %06lx\n",
                    (double)(f - last_frames) * 1e6 / (double)(now - next_report + 2000000u),
                    (unsigned long)pump_requests, (unsigned long)pump_chunks,
                    (unsigned long)(pump_words / 1000u), (unsigned long)pump_resyncs,
                    (unsigned long)hostAudioDrops, (unsigned long)chip_bank_swaps,
-                   chipset.bplcon0, (unsigned long)m68k_get_reg(NULL, M68K_REG_PC));
+                   chipset.bplcon0, (unsigned long)host_dpf_rows, (unsigned long)m68k_get_reg(NULL, M68K_REG_PC));
             next_report = now + 2000000u;
 #ifdef DMA_SLOT_STATS
             extern uint32_t dma_stat_slow, dma_stat_batched, dma_stat_skipped;

@@ -57,6 +57,105 @@ rep("""            default:
                 c1_image = NULL;
                 continue;
             }""")
+# ── frank-amiga: dual playfield ────────────────────────────────────────────
+rep("""static inline void C1_FUNC(c1Copy)(uint8_t *line,""", """// frank-amiga: dual playfield. A DPF block is split into its playfields
+// (planes 1/3/5 -> PF1, colours 0-7; planes 2/4/6 -> PF2, colours 8-15),
+// each kept in a row buffer at its own scroll offset; they are combined by
+// priority when the row is flushed (before anything else touches it).
+static uint8_t dpf_pf1[DVI_DIRECT_IMAGE_WIDTH], dpf_pf2[DVI_DIRECT_IMAGE_WIDTH];
+static int dpf_y = -1, dpf_min, dpf_max;
+static int c1_dpf_delta;          // PF2 offset from PF1, image columns
+static bool c1_pf2pri;
+static void C1_FUNC(c1Record)(int y, int x0, int x1);
+
+static void __attribute__((noinline)) C1_FUNC(dpfFlush)(void) {
+    if (dpf_y < 0)
+        return;
+    const int y = dpf_y;
+    dpf_y = -1;
+    if (!c1_image || dpf_max <= dpf_min)
+        return;
+    uint8_t *line = c1_image + y * DVI_DIRECT_IMAGE_WIDTH;
+    for (int x = dpf_min; x < dpf_max; ++x) {
+        const uint8_t a = dpf_pf1[x], b = dpf_pf2[x];
+        line[x] = c1_pf2pri ? (b ? (uint8_t)(8u + b) : a)
+                            : (a ? a : (b ? (uint8_t)(8u + b) : 0));
+        dpf_pf1[x] = dpf_pf2[x] = 0;
+    }
+    const bool ham = c1_ham;
+    c1_ham = false;
+    c1Record(y, dpf_min, dpf_max);
+    c1_ham = ham;
+}
+
+static void C1_FUNC(dpfPlace)(int y, int image_x, const uint8_t *pixels,
+                              int width) {
+    if (y != dpf_y) {
+        dpfFlush();
+        dpf_y = y;
+        dpf_min = DVI_DIRECT_IMAGE_WIDTH;
+        dpf_max = 0;
+    }
+    for (int i = 0; i < width; ++i) {
+        const uint8_t v = pixels[i];
+        const uint8_t pf1 = (uint8_t)((v & 1u) | ((v >> 1) & 2u) | ((v >> 2) & 4u));
+        const uint8_t pf2 = (uint8_t)(((v >> 1) & 1u) | ((v >> 2) & 2u) | ((v >> 3) & 4u));
+        const int x1 = image_x + i, x2 = x1 + c1_dpf_delta;
+        if (x1 >= 0 && x1 < DVI_DIRECT_IMAGE_WIDTH) {
+            dpf_pf1[x1] = pf1;
+            if (x1 < dpf_min) dpf_min = x1;
+            if (x1 + 1 > dpf_max) dpf_max = x1 + 1;
+        }
+        if (x2 >= 0 && x2 < DVI_DIRECT_IMAGE_WIDTH) {
+            dpf_pf2[x2] = pf2;
+            if (x2 < dpf_min) dpf_min = x2;
+            if (x2 + 1 > dpf_max) dpf_max = x2 + 1;
+        }
+    }
+}
+
+static inline void C1_FUNC(c1Copy)(uint8_t *line,""")
+# c1Place: DPF blocks go to the playfield buffers (full-width layout only)
+rep("""    int image_x = x - c1_rotation;
+    if (image_x < 0)
+        image_x += HOST_RASTER_W;
+    int first = HOST_RASTER_W - image_x;""", """    int image_x = x - c1_rotation;
+    if (image_x < 0)
+        image_x += HOST_RASTER_W;
+    if (c1_dpf_block) {
+        dpfPlace(y, image_x, pixels, width);
+        return;
+    }
+    if (dpf_y >= 0)
+        dpfFlush();
+    int first = HOST_RASTER_W - image_x;""")
+rep("""static uint16_t c1_palette[32];   // current colours, 0x0RGB""", """static uint16_t c1_palette[32];   // current colours, 0x0RGB
+static bool c1_dpf_block;         // frank-amiga: the block being placed is DPF
+static void dpfFlush(void);""")
+# flush before anything else draws on / closes the row
+for fn in ['static void C1_FUNC(c1Sprite)(int row, int x, uint32_t extra, uint32_t ab,\n                              uint32_t cd) {',
+           'static void C1_FUNC(c1RowSame)(int row) {',
+           'static void C1_FUNC(c1RowEnd)(int row) {',
+           'static void C1_FUNC(c1End)(uint16_t border) {',
+           'static void C1_FUNC(c1Colour)(int row, int x, int reg, uint16_t value) {']:
+    rep(fn, fn+'\n    dpfFlush();')
+rep("""            case MSG_HIRES: {
+                const int count = (int)(header >> MSG_RUN_SHIFT & 0xfu) + 1;""", """            case MSG_DPF: {
+                const uint32_t st = header >> 23;
+                dpfFlush();
+                c1_dpf_delta = 2 * ((int)((st & 31u) ^ 16u) - 16);
+                c1_pf2pri = (st >> 5) & 1u;
+                length = 1;
+                break;
+            }
+            case MSG_HIRES: {
+                const int count = (int)(header >> MSG_RUN_SHIFT & 0xfu) + 1;
+                c1_dpf_block = (header & MSG_RUN_DPF) != 0;""")
+rep("""            case MSG_LORES: {
+                const int count = (int)(header >> MSG_RUN_SHIFT & 0xfu) + 1;""", """            case MSG_LORES: {
+                const int count = (int)(header >> MSG_RUN_SHIFT & 0xfu) + 1;
+                c1_dpf_block = (header & MSG_RUN_DPF) != 0;""")
+
 head=open('master/src/denise/denise_c1_head.inc').read()
 open('master/src/denise/denise_c1.c','w').write(head+body+'\n')
 print(len(body.split('\n')),'lines')

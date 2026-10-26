@@ -20,7 +20,14 @@ enum {
     MSG_ROW_SAME,    // no words: image row `row` is unchanged (copy it)
     // frank-amiga: Paula's line record (omega/Audio.h); extra = word count.
     MSG_AUDIO,
+    // frank-amiga: dual playfield state of image row `row`, sent before its
+    // first DPF block and when it changes: extra bits 0-4 = PF2H - PF1H
+    // (signed, lores pixels), bit 5 = PF2PRI.
+    MSG_DPF,
 };
+// frank-amiga: HIRES/LORES run header extra bit 5 (header bit 28): the
+// run's blocks are dual playfield (planes 1/3/5 and 2/4/6 apart).
+#define MSG_RUN_DPF (1u << 28)
 #define MSG_HEADER(type, row, x, extra) \
     ((uint32_t)(type) | (uint32_t)(row) << 4 | (uint32_t)(x) << 13 | \
      (uint32_t)(extra) << 23)

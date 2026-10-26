@@ -85,6 +85,8 @@ static uint16_t c1_mark_pos;       // its palette-log position
     __attribute__((optimize("no-tree-loop-distribute-patterns"))) \
     __not_in_flash_func(name)
 static uint16_t c1_palette[32];   // current colours, 0x0RGB
+static bool c1_dpf_block;         // frank-amiga: the block being placed is DPF
+static void dpfFlush(void);
 volatile uint32_t hostCaptureHold; // debug: non-zero stops drawing new frames
 
 
@@ -187,6 +189,7 @@ static void C1_FUNC(c1SpriteTailFlush)(void) {
 // registers even on HAM rows, where they must not change the held colour.
 static void C1_FUNC(c1Sprite)(int row, int x, uint32_t extra, uint32_t ab,
                               uint32_t cd) {
+    dpfFlush();
     if (!c1_image || row % c1_step)
         return;
     const int y = c1_first_row + row / c1_step;
@@ -261,6 +264,62 @@ static void C1_FUNC(c1Record)(int y, int x0, int x1) {
     rec->segments_used = (uint16_t)(used + 1u);
 }
 
+// frank-amiga: dual playfield. A DPF block is split into its playfields
+// (planes 1/3/5 -> PF1, colours 0-7; planes 2/4/6 -> PF2, colours 8-15),
+// each kept in a row buffer at its own scroll offset; they are combined by
+// priority when the row is flushed (before anything else touches it).
+static uint8_t dpf_pf1[DVI_DIRECT_IMAGE_WIDTH], dpf_pf2[DVI_DIRECT_IMAGE_WIDTH];
+static int dpf_y = -1, dpf_min, dpf_max;
+static int c1_dpf_delta;          // PF2 offset from PF1, image columns
+static bool c1_pf2pri;
+static void C1_FUNC(c1Record)(int y, int x0, int x1);
+
+static void __attribute__((noinline)) C1_FUNC(dpfFlush)(void) {
+    if (dpf_y < 0)
+        return;
+    const int y = dpf_y;
+    dpf_y = -1;
+    if (!c1_image || dpf_max <= dpf_min)
+        return;
+    uint8_t *line = c1_image + y * DVI_DIRECT_IMAGE_WIDTH;
+    for (int x = dpf_min; x < dpf_max; ++x) {
+        const uint8_t a = dpf_pf1[x], b = dpf_pf2[x];
+        line[x] = c1_pf2pri ? (b ? (uint8_t)(8u + b) : a)
+                            : (a ? a : (b ? (uint8_t)(8u + b) : 0));
+        dpf_pf1[x] = dpf_pf2[x] = 0;
+    }
+    const bool ham = c1_ham;
+    c1_ham = false;
+    c1Record(y, dpf_min, dpf_max);
+    c1_ham = ham;
+}
+
+static void C1_FUNC(dpfPlace)(int y, int image_x, const uint8_t *pixels,
+                              int width) {
+    if (y != dpf_y) {
+        dpfFlush();
+        dpf_y = y;
+        dpf_min = DVI_DIRECT_IMAGE_WIDTH;
+        dpf_max = 0;
+    }
+    for (int i = 0; i < width; ++i) {
+        const uint8_t v = pixels[i];
+        const uint8_t pf1 = (uint8_t)((v & 1u) | ((v >> 1) & 2u) | ((v >> 2) & 4u));
+        const uint8_t pf2 = (uint8_t)(((v >> 1) & 1u) | ((v >> 2) & 2u) | ((v >> 3) & 4u));
+        const int x1 = image_x + i, x2 = x1 + c1_dpf_delta;
+        if (x1 >= 0 && x1 < DVI_DIRECT_IMAGE_WIDTH) {
+            dpf_pf1[x1] = pf1;
+            if (x1 < dpf_min) dpf_min = x1;
+            if (x1 + 1 > dpf_max) dpf_max = x1 + 1;
+        }
+        if (x2 >= 0 && x2 < DVI_DIRECT_IMAGE_WIDTH) {
+            dpf_pf2[x2] = pf2;
+            if (x2 < dpf_min) dpf_min = x2;
+            if (x2 + 1 > dpf_max) dpf_max = x2 + 1;
+        }
+    }
+}
+
 static inline void C1_FUNC(c1Copy)(uint8_t *line,
                                                const uint8_t *pixels,
                                                int y, int x, int count) {
@@ -294,6 +353,12 @@ static void C1_FUNC(c1Place)(int row, int x,
     int image_x = x - c1_rotation;
     if (image_x < 0)
         image_x += HOST_RASTER_W;
+    if (c1_dpf_block) {
+        dpfPlace(y, image_x, pixels, width);
+        return;
+    }
+    if (dpf_y >= 0)
+        dpfFlush();
     int first = HOST_RASTER_W - image_x;
     if (first > width)
         first = width;
@@ -414,6 +479,7 @@ static void C1_FUNC(c1Begin)(uint32_t layout, uint32_t size,
 // are in place; take its runs from the buffer's last record, at the current
 // colour-log position (the palette may have changed since).
 static void C1_FUNC(c1RowSame)(int row) {
+    dpfFlush();
     if (!c1_image || row % c1_step)
         return;
     const int y = c1_first_row + row / c1_step;
@@ -448,6 +514,7 @@ static void C1_FUNC(c1RowSame)(int row) {
 // Rows since the previous message saw no palette change: they keep its
 // position.
 static void C1_FUNC(c1RowEnd)(int row) {
+    dpfFlush();
     if (!c1_image || row % c1_step)
         return;
     const int y = c1_first_row + row / c1_step;
@@ -462,6 +529,7 @@ static void C1_FUNC(c1RowEnd)(int row) {
 
 // Unwritten columns need no fill: scanout shows them in the row's COLOR00.
 static void C1_FUNC(c1End)(uint16_t border) {
+    dpfFlush();
     if (!c1_image)
         return;
     if (c1_tail_pending)
@@ -527,6 +595,7 @@ static inline int C1_FUNC(c1ImageX)(int x) {
 // undrawn rest of the row becomes a run of colour 0 (COLOR00) first, so
 // Copper colour changes show in the border too (ATK's colour bars).
 static void C1_FUNC(c1Colour)(int row, int x, int reg, uint16_t value) {
+    dpfFlush();
     if (value == c1_palette[reg])
         return;
     c1_palette[reg] = value;
@@ -622,8 +691,17 @@ void C1_FUNC(hostCore1Loop)(void) {
             const int x = (int)((header >> 13) & 0x3ffu);
             uint32_t length;
             switch (type) {
+            case MSG_DPF: {
+                const uint32_t st = header >> 23;
+                dpfFlush();
+                c1_dpf_delta = 2 * ((int)((st & 31u) ^ 16u) - 16);
+                c1_pf2pri = (st >> 5) & 1u;
+                length = 1;
+                break;
+            }
             case MSG_HIRES: {
                 const int count = (int)(header >> MSG_RUN_SHIFT & 0xfu) + 1;
+                c1_dpf_block = (header & MSG_RUN_DPF) != 0;
                 for (int i = 0; i < count; ++i)
                     c1Hires(row, x + 16 * i, msg[1 + 2 * i], msg[2 + 2 * i]);
                 length = 1 + 2 * (uint32_t)count;
@@ -631,6 +709,7 @@ void C1_FUNC(hostCore1Loop)(void) {
             }
             case MSG_LORES: {
                 const int count = (int)(header >> MSG_RUN_SHIFT & 0xfu) + 1;
+                c1_dpf_block = (header & MSG_RUN_DPF) != 0;
                 const bool ham = (header >> 23) & 1u;
                 for (int i = 0; i < count; ++i)
                     c1Lores(row, x + 32 * i, msg[1 + 3 * i], msg[2 + 3 * i],
