@@ -9,7 +9,10 @@
 //  queue the next block; words are fetched as needed, and when the length
 //  runs out the registers are reloaded and the interrupt raised again. With
 //  DMA off, a CPU write to AUDxDAT plays that word, and the interrupt asks
-//  for the next one. Attach modes (ADKCON) are not emulated.
+//  for the next one. Attach modes (ADKCON USExVn/USExPn): a modulating
+//  channel is silent and each of its data words, one per period, goes to
+//  the next channel's AUDxVOL or AUDxPER (alternating when both are set;
+//  channel 3's words go nowhere).
 //
 //  The channels run in emulated time and are advanced once per raster line.
 //  Each line's sample changes (with their colour clock), volumes and LED
@@ -43,6 +46,7 @@ typedef struct {
     int32_t counter;    // colour clocks left of the current sample
     int8_t sample;      // current output sample
     int datPending;     // CPU wrote AUDxDAT since the last word was taken
+    int attachPeriod;   // both attach modes: the next word is a period
 } AudioChannel;
 
 static AudioChannel ch[4];
@@ -118,6 +122,7 @@ void audioDmaconChanged(uint16_t old) {
         if (now && !was) {
             setMode(c, 1);
             ch[c].lowNext = 0;
+            ch[c].attachPeriod = 0;
             ch[c].counter = 0;
             reload(c);
         } else if (!now && was && ch[c].mode == 1) {
@@ -138,10 +143,26 @@ void audioDatWritten(int c) {
     }
 }
 
+// ADKCON attach bits of channel c: 1 volume, 2 period.
+static inline int attachMode(int c) {
+    const uint16_t adk = chipset.adkconr;
+    return ((adk >> c) & 1) | ((adk >> (4 + c)) & 1) << 1;
+}
+
+static void setTarget(int c, int period, uint16_t value) {
+    if (c == 3)
+        return;
+    uint16_t *reg = period
+        ? (c == 0 ? &chipset.aud1per : c == 1 ? &chipset.aud2per : &chipset.aud3per)
+        : (c == 0 ? &chipset.aud1vol : c == 1 ? &chipset.aud2vol : &chipset.aud3vol);
+    *reg = value;
+}
+
 // Moves channel c to its next sample.
 static void nextSample(int c) {
     AudioChannel *a = &ch[c];
-    if (a->lowNext) {
+    const int attach = attachMode(c);
+    if (a->lowNext && !attach) {
         a->sample = (int8_t)(a->word & 0xFF);
         a->lowNext = 0;
         return;
@@ -164,6 +185,16 @@ static void nextSample(int c) {
         a->datPending = 0;
         a->word = regDat(c);
         raiseInterrupt(c);
+    }
+    if (attach) {
+        // A whole word per period; with both modes they alternate,
+        // volume first.
+        const int period = attach == 2 || (attach == 3 && a->attachPeriod);
+        setTarget(c, period, a->word);
+        a->attachPeriod = attach == 3 && !a->attachPeriod;
+        a->lowNext = 0;
+        a->sample = 0;
+        return;
     }
     a->sample = (int8_t)(a->word >> 8);
     a->lowNext = 1;
