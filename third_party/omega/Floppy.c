@@ -725,28 +725,22 @@ void floppySetState(){            //To be called when Writes to CIAB prb happen.
     //printf("%d: ",count);
     
     //ID mode... to identify external drives...
-     // frank-amiga: turning the motor on ends ID mode; the write is a
-     // normal one.
+     // ID mode (frank-amiga): while the motor is off after an ID reload,
+     // each selection shows the next ID bit on /RDY (drive present: 1s,
+     // /RDY low). It only changes /RDY: steps and side select still work,
+     // and turning the motor on ends it.
      if (df[driveSelected].idMode > 0 && !(PRB & 0x80))
          df[driveSelected].idMode = 0;
-     if(df[driveSelected].idMode>0){   // Id mode
-         // Report drive present (/DKRDY=0) only for drives that physically exist.
-         // Drive 0 is always present (even with no ADF loaded). Drives 1-3 are only
-         // present if an ADF is loaded. Without this distinction, the ROM sees four
-         // 3.5" DD drives, times out reading all of them, then falls to ROM disk.
-         if(drive_connected[driveSelected] || df[driveSelected].hasDisk){
-             df[driveSelected].pra  &= 0xDF;  // /DKRDY=0 → drive present, ID=0x00000000
-         }
-         df[driveSelected].idMode -=1;
-         CIAA.pra = (CIAA.pra & 0xC3) | (df[driveSelected].pra & 0x3C);
-         return;
+     int idBit = 0;
+     if (df[driveSelected].idMode > 0) {
+         idBit = drive_connected[driveSelected] || df[driveSelected].hasDisk;
+         df[driveSelected].idMode -= 1;
      }
-    
-    
 
-    
     // If no change in state just return
     if(PRB == df[driveSelected].prb){
+        if (idBit)
+            df[driveSelected].pra &= 0xDF;
         floppyState();
         //printf("---\n");
         return;
@@ -851,6 +845,8 @@ void floppySetState(){            //To be called when Writes to CIAB prb happen.
     
     
     df[driveSelected].prb = PRB;
+    if (idBit)
+        df[driveSelected].pra &= 0xDF;   // ID bit: /RDY low
     
     //printf("\n");
     CIAA.pra &= 0xC3;

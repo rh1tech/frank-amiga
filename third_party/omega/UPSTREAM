@@ -11,3 +11,4 @@ Local change: Floppy.c DF1 (own ADF, track buffer, floppyConnect); DMA.c OMEGA_D
 Local change: disk writes (DMA.c DSKLEN WRITE -> Floppy.c decodes AmigaDOS sectors into the PSRAM ADF, /WPRO from ADF location, dirty-track bitmap), ADKCON WORDSYNC off starts DMA at once.
 Local change: blitter end timing — blitter_execute() still computes a blit at once, but BBUSY/INTREQ BLIT come after an estimate of its real duration (DMA.c blitTime, state 3).
 Local change: Floppy.c re-arms an external drive's ID mode at every motor off (trackloaders identify DF1); motor on ends ID mode.
+Local change: m68kconf.h PICO PC-relative reads are masked with ADDRESS_68K (24-bit bus).

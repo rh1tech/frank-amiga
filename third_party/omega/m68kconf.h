@@ -186,9 +186,18 @@
 #ifdef PICO_BUILD
 #define m68k_read_immediate_16(A) chipFetchWord(A)
 #define m68k_read_immediate_32(A) chipFetchLongInline(A)
-#define m68k_read_pcrelative_8(A) cpu_read_byte(A)
-#define m68k_read_pcrelative_16(A) cpu_read_word(A)
-#define m68k_read_pcrelative_32(A) cpu_read_long(A)
+// frank-amiga: through the CPU's address pins like every other read (Musashi
+// masks those in m68ki_read_*_fc()). A PC with its top byte set is fine on a
+// 68000 — Desert Dream's loader runs its TRAP #0 handler at 0xFF00069E once
+// `st $80.w` has hit the vector — but unmasked, its PC-relative reads missed
+// memory and it sought 14385 tracks.
+// (24 address pins: the 68000/EC020 machines this build emulates.)
+static inline unsigned int cpu_pcrel_byte(unsigned int a) { return cpu_read_byte(a & 0xFFFFFFu); }
+static inline unsigned int cpu_pcrel_word(unsigned int a) { return cpu_read_word(a & 0xFFFFFFu); }
+static inline unsigned int cpu_pcrel_long(unsigned int a) { return cpu_read_long(a & 0xFFFFFFu); }
+#define m68k_read_pcrelative_8(A) cpu_pcrel_byte(A)
+#define m68k_read_pcrelative_16(A) cpu_pcrel_word(A)
+#define m68k_read_pcrelative_32(A) cpu_pcrel_long(A)
 #endif
 
 #define m68k_read_disassembler_16(A) cpu_read_word_dasm(A)
