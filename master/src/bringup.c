@@ -34,7 +34,7 @@ static const uint16_t bars12[8] = {
 static uint32_t bars565[8];
 static volatile uint32_t square_row;
 
-static void __not_in_flash_func(pattern_row)(uint32_t row, uint32_t *px, uint32_t w) {
+static void __not_in_flash_func(pattern_row)(uint32_t row, uint32_t field, uint32_t *px, uint32_t w) {
     const uint32_t rows = video_rows();
     if (row == 0 || row == rows - 1u) {
         for (uint32_t x = 0; x < w; x++) px[x] = white565;

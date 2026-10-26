@@ -49,10 +49,16 @@ uint8_t *dvi_display_direct_acquire(dvi_indexed_frame_t **record,
                                     dvi_indexed_frame_t **prev, int *buffer);
 // Queues the acquired frame; `border` is COLOR00 (0x0RGB) at frame end.
 void dvi_display_direct_publish(uint16_t border);
+// Interlaced frames: field 0 (short) / 1 (long) draws into its own buffer
+// and scanout weaves the two once both exist.
+uint8_t *dvi_display_field_acquire(int field, dvi_indexed_frame_t **record,
+                                   dvi_indexed_frame_t **prev);
+void dvi_display_field_publish(uint16_t border);
+void dvi_display_weave_stop(void);
 
 // hstx_video callbacks: one source row of RGB888, and the frame start
 // (swaps in a pending frame).
-void denise_row(uint32_t row, uint32_t *rgb888, uint32_t width);
+void denise_row(uint32_t row, uint32_t field, uint32_t *rgb888, uint32_t width);
 void denise_frame_start(uint32_t frame);
 
 extern volatile uint32_t dvi_refreshes, dvi_frames_shown;

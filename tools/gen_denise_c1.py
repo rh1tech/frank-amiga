@@ -19,21 +19,6 @@ def rep(a,b):
     global body
     assert a in body, a[:60]
     body=body.replace(a,b)
-rep("    c1_field = (layout >> 25) & 1u ? (int)((layout >> 26) & 1u) : -1;",
- "    // frank-amiga: interlace weaving is not ported yet; fields are drawn\n    // as progressive frames.\n    c1_field = -1;")
-rep("""    if (c1_field >= 0) {
-        // Interlace: draw the field over its own buffer, no swap to wait
-        // for (scanout weaves both buffers).
-        c1_image = hostCaptureHold ? NULL
-                 : dvi_display_field_acquire(c1_field, &c1_record,
-                                             &c1_prev_record);
-        c1_buffer = c1_field;
-    } else {
-        dvi_display_weave_stop();""","""    {""")
-rep("""    if (c1_field >= 0)
-        dvi_display_field_publish(border);
-    else
-        dvi_display_direct_publish(border);""","""    dvi_display_direct_publish(border);""")
 rep("""            case MSG_ROW_END:
                 c1RowEnd(row);
                 length = 1;

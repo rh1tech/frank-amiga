@@ -70,7 +70,7 @@ static const mode_t modes[] = {
 #define HSTX_CMD_NOP         (0xfu << 12)
 
 #define MAX_WIDTH 640u
-#define ROW_BUFFERS 2u
+#define ROW_BUFFERS 3u
 /* [0] = TMDS | width, then width pixel words, then a NOP. */
 #define ROW_WORDS (1u + MAX_WIDTH + 1u)
 
@@ -99,7 +99,22 @@ static uint8_t hblank_len[8];
 
 static uint hstx_dma[4];
 static uint hblank_line[2], active_line[2];
-static volatile int expand_row[ROW_BUFFERS] = { -1, -1 };
+/* Expansion requests per row buffer: -1, or row | field << 16 (field 0/1
+ * while weaving interlaced fields, 2 for a progressive row). */
+static volatile int expand_row[ROW_BUFFERS] = { -1, -1, -1 };
+static volatile bool weave;
+void video_set_weave(bool on) { weave = on; }
+
+/* Row buffer and request of output line `line` (< height). Progressive:
+ * one row per two lines, buffers alternate per row. Weaving: every line its
+ * own row of field line & 1; three buffers so the one being sent is never
+ * the one being filled. */
+static inline uint line_buffer(uint line) {
+    return weave ? line % ROW_BUFFERS : (line >> 1) & 1u;
+}
+static inline int line_request(uint line) {
+    return weave ? (int)((line >> 1) | (line & 1u) << 16) : (int)((line >> 1) | 2u << 16);
+}
 static uint expand_irq;
 
 volatile uint32_t video_frames;
@@ -165,18 +180,17 @@ static void __not_in_flash_func(next_hblank)(uint p) {
     /* The line this channel just finished is now sending its active part:
      * if that row is still waiting for expansion, it is genuinely late. */
     const uint sent = line >= 2u ? line - 2u : line + v_total - 2u;
-    if (sent < m->height && expand_row[(sent >> 1) & 1u] == (int)(sent >> 1))
+    if (sent < m->height && expand_row[line_buffer(sent)] == line_request(sent))
         video_late_rows++;
     const uint key = (line_is_vsync(line) ? 0u : 1u) |
                      (line < m->height ? 2u : 0u) | (line == 0u ? 4u : 0u);
     dma_channel_hw_t *ch = &dma_hw->ch[hstx_dma[p]];
     ch->read_addr = (uintptr_t)hblank_var[key];
     ch->transfer_count = hblank_len[key];
-    /* First line of a row: expand it now, nearly two lines before it is
-     * sent, into the buffer the previous row is not using. */
-    if (line < m->height && !(line & 1u)) {
-        const uint row = line >> 1;
-        expand_row[row & 1u] = (int)row;
+    /* Expand the line's row now, nearly two lines before it is sent: every
+     * line while weaving, else the first line of each row. */
+    if (line < m->height && (weave || !(line & 1u))) {
+        expand_row[line_buffer(line)] = line_request(line);
         irq_set_pending(expand_irq);
     }
 }
@@ -187,8 +201,7 @@ static void __not_in_flash_func(next_active)(uint p) {
     const uint32_t *list;
     uint count;
     if (line < m->height) {
-        const uint row = line >> 1;
-        list = row_buf[row & 1u];
+        list = row_buf[line_buffer(line)];
         count = 2u + m->width;
     } else if (line_is_vsync(line)) {
         list = vsync_active;
@@ -216,9 +229,9 @@ static void __not_in_flash_func(expand_isr)(void) {
     while (again) {
         again = false;
         for (uint b = 0; b < ROW_BUFFERS; ++b) {
-            const int row = expand_row[b];
-            if (row < 0) continue;
-            row_fn((uint32_t)row, &row_buf[b][1], m->width);
+            const int req = expand_row[b];
+            if (req < 0) continue;
+            row_fn((uint32_t)req & 0xFFFFu, (uint32_t)req >> 16, &row_buf[b][1], m->width);
             expand_row[b] = -1;
             again = true;
         }
@@ -307,7 +320,7 @@ void video_start(void) {
         }
     }
     /* Rows 0 and 1 before the first lines go out. */
-    row_fn(0, &row_buf[0][1], m->width);
+    row_fn(0, 2, &row_buf[0][1], m->width);
     for (uint p = 0; p < 2u; ++p) {
         next_hblank(p);
         next_active(p);

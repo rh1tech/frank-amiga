@@ -65,7 +65,7 @@ target_compile_definitions(frank-amiga-slave PRIVATE ${FRANK_DEFINITIONS}
     OMEGA_RTG=0
     OMEGA_REALTIME=0
     OMEGA_HOT_OPCODES_IN_RAM=1
-    CHIP_SRAM_BANKS=4u           # chip RAM 0x000000-0x03FFFF in SRAM
+    CHIP_SRAM_BANKS=4u           # four 64 KB chip RAM banks in SRAM (promoted)
     ${FRANK_EXTRA_DEFS}
     OMEGA_CPU_CYCLES_PER_SLOT=2
     OMEGA_CPU_SLICE_SLOTS=8

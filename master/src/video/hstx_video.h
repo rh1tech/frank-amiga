@@ -17,11 +17,13 @@ typedef enum {
     VIDEO_MODE_COUNT,
 } video_mode_t;
 
-/* Fill source row `row` (each shown on two output lines) with `width`
- * RGB888 pixels (0x00RRGGBB). Runs in an interrupt on the core that called
+/* Fill source row `row` with `width` RGB888 pixels (0x00RRGGBB). `field`
+ * is 2 for a progressive row (shown on two output lines), or 0/1 while
+ * weaving: the row of that interlace field, shown on one line. Runs in an interrupt on the core that called
  * video_start(), roughly two output lines before the row is sent; must live
  * in RAM. */
-typedef void (*video_row_fn)(uint32_t row, uint32_t *rgb888, uint32_t width);
+typedef void (*video_row_fn)(uint32_t row, uint32_t field, uint32_t *rgb888,
+                             uint32_t width);
 /* Called from the scanout interrupt at the start of every output frame
  * (line 0). Optional. */
 typedef void (*video_frame_fn)(uint32_t frame);
@@ -31,6 +33,8 @@ bool video_init(video_mode_t mode, video_row_fn row, video_frame_fn frame);
 /* Start scanout; its interrupts run on the calling core. */
 void video_start(void);
 
+/* Weave interlaced fields (takes effect per line; switch it at line 0). */
+void video_set_weave(bool on);
 uint32_t video_width(void);
 uint32_t video_rows(void);
 const char *video_mode_name(void);

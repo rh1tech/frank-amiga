@@ -103,6 +103,43 @@ void __not_in_flash_func(dvi_display_direct_publish)(uint16_t border) {
     direct_target = -1;
 }
 
+// Interlaced frames (BPLCON0 LACE): core 1 draws each field into the
+// buffer of its parity (short field: 0, long: 1) and the scanout weaves the
+// two once both exist. weave_ready: fields drawn so far.
+static volatile bool weave_wanted, weave_active, weave_new_field;
+static volatile uint32_t weave_ready;
+static volatile int weave_last;
+static int field_target = -1;
+
+uint8_t *__not_in_flash_func(dvi_display_field_acquire)(
+    int field, dvi_indexed_frame_t **record, dvi_indexed_frame_t **prev) {
+    weave_wanted = true;
+    field_target = field;
+    *record = dvi_next_record(field, prev);
+    return source_frames[field];
+}
+
+void __not_in_flash_func(dvi_display_field_publish)(uint16_t border) {
+    if (field_target < 0)
+        return;
+    frame_indexed[field_target] = true;
+    frame_border[field_target] = ocs_rgb888(border);
+    buf_rec[field_target] = (uint8_t)rec_target;
+    weave_last = field_target;
+    weave_ready |= 1u << field_target;
+    weave_new_field = true;
+    field_target = -1;
+}
+
+void __not_in_flash_func(dvi_display_weave_stop)(void) {
+    if (!weave_wanted)
+        return;
+    weave_wanted = false;
+    weave_ready = 0;
+    // The last field is the displayed frame; the other buffer is free.
+    __atomic_store_n(&frame_state, (uint32_t)weave_last, __ATOMIC_RELEASE);
+}
+
 // ── Row expansion (scan_*) ────────────────────────────────────────────────
 // Scanout state of each indexed frame: its palette after `applied` log
 // entries, as RGB888 (32..63 extra half-brite), and the HAM colour-load
@@ -274,6 +311,28 @@ void SCAN_FUNC(denise_frame_start)(uint32_t frame) {
      * edges and never runs more than a frame ahead (main.c
      * host_frame_paced()), which locks emulation to the display. */
     gpio_xor_mask64(1ull << M_LINK_FS);
+    // Interlace: once both fields are drawn, weave them (buffer 0, the
+    // short field, on even lines; buffer 1, the long one, on odd lines).
+    if (weave_wanted && weave_ready == 3u) {
+        weave_active = true;
+        if (weave_new_field) {
+            weave_new_field = false;
+            dvi_frames_shown++;
+        }
+        frame_rec[0] = buf_rec[0];
+        frame_rec[1] = buf_rec[1];
+        scan_begin_frame(0);
+        scan_begin_frame(1);
+        video_set_weave(true);
+        return;
+    }
+    if (weave_active) {
+        // Back to progressive frames: show the last field until the next
+        // frame is published.
+        weave_active = false;
+        video_set_weave(false);
+        active_frame = (int)(__atomic_load_n(&frame_state, __ATOMIC_ACQUIRE) & 1u);
+    }
     uint32_t state = __atomic_load_n(&frame_state, __ATOMIC_ACQUIRE);
     if ((state & FRAME_PENDING) &&
         __atomic_compare_exchange_n(&frame_state, &state, (state & 1u) ^ 1u,
@@ -285,14 +344,15 @@ void SCAN_FUNC(denise_frame_start)(uint32_t frame) {
     scan_begin_frame(active_frame);
 }
 
-void SCAN_FUNC(denise_row)(uint32_t row, uint32_t *out, uint32_t width) {
+void SCAN_FUNC(denise_row)(uint32_t row, uint32_t field, uint32_t *out, uint32_t width) {
+    const int frame = field < 2u ? (int)field : active_frame;
     const uint32_t y = row - image_y0 + image_skip;
     if (row < image_y0 || y >= AMIGA_SOURCE_HEIGHT) {
-        scan_fill(out, 0, width, frame_border[active_frame]);
+        scan_fill(out, 0, width, frame_border[field < 2u ? (uint32_t)weave_last : (uint32_t)frame]);
         osd_overlay_row(row, out, width);
         return;
     }
-    const uint32_t border = scan_expand_row(active_frame, y, out + image_x0);
+    const uint32_t border = scan_expand_row(frame, y, out + image_x0);
     scan_fill(out, 0, image_x0, border);
     scan_fill(out, image_x0 + AMIGA_SOURCE_WIDTH, width, scan_right_border);
     osd_overlay_row(row, out, width);

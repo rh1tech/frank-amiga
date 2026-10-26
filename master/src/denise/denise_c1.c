@@ -368,10 +368,16 @@ static void C1_FUNC(c1Begin)(uint32_t layout, uint32_t size,
     // Field buffer: 0 for the short field (even output lines), 1 for the
     // long one (odd lines). The other way round, diagonal strokes in
     // Agony's interlaced intro zigzagged by a pixel.
-    // frank-amiga: interlace weaving is not ported yet; fields are drawn
-    // as progressive frames.
-    c1_field = -1;
-    {
+    c1_field = (layout >> 25) & 1u ? (int)((layout >> 26) & 1u) : -1;
+    if (c1_field >= 0) {
+        // Interlace: draw the field over its own buffer, no swap to wait
+        // for (scanout weaves both buffers).
+        c1_image = hostCaptureHold ? NULL
+                 : dvi_display_field_acquire(c1_field, &c1_record,
+                                             &c1_prev_record);
+        c1_buffer = c1_field;
+    } else {
+        dvi_display_weave_stop();
         // The previous frame may still wait for the next DVI frame boundary
         // (at most one display frame). Wait for the swap while core 0 keeps
         // queueing; if the ring gets close to full first, skip this frame so
@@ -465,7 +471,10 @@ static void C1_FUNC(c1End)(uint16_t border) {
         rec->row_segment[++c1_open_row] = rec->segments_used;
     while (++c1_mark_row < c1_height)
         rec->row_log[c1_mark_row] = c1_mark_pos;
-    dvi_display_direct_publish(border);
+    if (c1_field >= 0)
+        dvi_display_field_publish(border);
+    else
+        dvi_display_direct_publish(border);
     // Core 0 leaves out a row unchanged since the oldest frame either
     // buffer holds.
     c1_buf_frame[c1_buffer] = c1_frame_no;
