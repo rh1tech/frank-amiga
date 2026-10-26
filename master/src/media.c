@@ -178,6 +178,47 @@ bool media_insert(int drive, const char *path) {
     return ok;
 }
 
+/* Disk write-back: the tracks the slave wrote go into the ADF files. */
+static bool save_drive(int drive) {
+    const char *path = drive ? media_config.df1 : media_config.df0;
+    if (!ctrl(LINK_OP_DIRTY, (uint32_t)drive, 0)) return false;
+    const uint32_t tracks = link_rx_hdr(sess)->arg0;
+    if (!tracks) return true;
+    uint8_t map[LINK_DISK_TRACKS / 8];
+    memcpy(map, (const uint8_t *)link_rx_hdr(sess) + sizeof(link_hdr_t), sizeof map);
+    FIL f;
+    const bool open = path[0] && media_mount() && f_open(&f, path, FA_WRITE) == FR_OK;
+    uint32_t saved = 0;
+    for (uint32_t t = 0; t < LINK_DISK_TRACKS; t++) {
+        if (!(map[t >> 3] & (1u << (t & 7)))) continue;
+        if (!ctrl(LINK_OP_DOWNLOAD, drive ? LINK_UP_DF1 : LINK_UP_DF0, t) ||
+            !link_rx_hdr(sess)->arg0 || !link_m_bulk_recv(sess, buf, LINK_TRACK_BYTES))
+            break;
+        UINT n = 0;
+        if (open && f_lseek(&f, t * LINK_TRACK_BYTES) == FR_OK &&
+            f_write(&f, buf, LINK_TRACK_BYTES, &n) == FR_OK && n == LINK_TRACK_BYTES)
+            saved++;
+    }
+    if (open) f_close(&f);
+    printf("media: DF%d %lu of %lu written tracks saved to %s\n", drive, (unsigned long)saved,
+           (unsigned long)tracks, path[0] ? path : "(no file)");
+    return saved == tracks;
+}
+
+void media_poll(void) {
+    /* Save a second after the slave reports writes: a game's save is a
+     * burst of tracks, taken in one go between two stream requests. */
+    static uint64_t dirty_since;
+    if (!stream_disk_dirty) { dirty_since = 0; return; }
+    const uint64_t now = time_us_64();
+    if (!dirty_since) { dirty_since = now; return; }
+    if (now - dirty_since < 1000000u) return;
+    stream_disk_dirty = false;
+    dirty_since = 0;
+    save_drive(0);
+    save_drive(1);
+}
+
 /* Bench helper: save `size` bytes of master PSRAM at `offset` as a file. */
 bool media_sdput(uint32_t offset, uint32_t size, const char *path) {
     if (!media_mount()) return false;

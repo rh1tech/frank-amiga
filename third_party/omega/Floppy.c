@@ -461,6 +461,14 @@ int floppyMountADF(int drive, const uint8_t *adf, uint32_t size) {
     cached_side[drive] = -1;
     df[drive].mfmData = drive_track_cache(drive);
     df[drive].hasDisk = 0;
+    // /WPRO: only a disk in PSRAM can take writes.
+#ifndef FLOPPY_ADF_WRITABLE
+#define FLOPPY_ADF_WRITABLE(a) ((a) >= 0x11000000u && (a) < 0x12000000u)
+#endif
+    if (FLOPPY_ADF_WRITABLE((uintptr_t)adf))
+        df[drive].pra |= 0x08;
+    else
+        df[drive].pra &= (uint8_t)~0x08;
 
     // Before insertion expose an invalid header rather than mounted data, so
     // Kickstart can finish its no-disk retry and display the hand screen.
@@ -479,9 +487,85 @@ void floppyConnect(int drive) {
         }
     }
 }
+
+// ── Writes ─────────────────────────────────────────────────────────────────
+// The written MFM stream collects in the drive's track buffer (the read
+// cache, invalidated afterwards); at the end its AmigaDOS sectors are
+// decoded into the ADF in PSRAM. Other formats are not kept.
+static uint32_t write_pos;
+
+void floppyWriteByte(uint8_t b) {
+    const int d = driveSelected;
+    if (d >= FLOPPY_DISK_DRIVES || !df[d].hasDisk || write_pos >= 0x4000)
+        return;
+    ((volatile uint8_t *)drive_track_cache(d))[write_pos++] = b;
+}
+
+void floppyWriteAbort(void) { write_pos = 0; }
+
+static inline uint32_t mfmLong(const volatile uint8_t *p) {
+    return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
+}
+static inline uint32_t mfmDecode(const volatile uint8_t *p, int span) {
+    return (mfmLong(p) & 0x55555555u) << 1 | (mfmLong(p + span) & 0x55555555u);
+}
+
+void floppyWriteDone(void) {
+    const int d = driveSelected;
+    const uint32_t n = write_pos;
+    write_pos = 0;
+    if (d >= FLOPPY_DISK_DRIVES || !drive_adf[d] || !df[d].hasDisk)
+        return;
+    // Only the uploaded copy in PSRAM is writable (not a flash image).
+    const uintptr_t a = (uintptr_t)drive_adf[d];
+    if (!FLOPPY_ADF_WRITABLE(a))
+        return;
+    uint8_t *adf = (uint8_t *)a;
+    const volatile uint8_t *t = drive_track_cache(d);
+    const int track = df[d].cylinder * 2 + df[d].side;
+    int sectors = 0;
+    for (uint32_t i = 0; i + 4 + 1080 <= n; ) {
+        if (!(t[i] == 0x44 && t[i + 1] == 0x89 && t[i + 2] == 0x44 && t[i + 3] == 0x89)) {
+            i++;
+            continue;
+        }
+        const volatile uint8_t *h = t + i + 4;
+        const uint32_t info = mfmDecode(h, 4);
+        const int trk = (int)(info >> 16 & 0xff), sec = (int)(info >> 8 & 0xff);
+        // Data checksum: XOR of the raw data longs, masked.
+        uint32_t sum = 0;
+        for (int k = 0; k < 256; k++) sum ^= mfmLong(h + 56 + 4 * k);
+        sum &= 0x55555555u;
+        if ((info >> 24) == 0xff && trk == track && sec < 11 &&
+            sum == mfmDecode(h + 48, 4)) {
+            uint8_t *dst = adf + (uint32_t)(trk * 11 + sec) * 512u;
+            for (int k = 0; k < 128; k++) {
+                const uint32_t v = mfmDecode(h + 56 + 4 * k, 512);
+                dst[4 * k] = (uint8_t)(v >> 24);
+                dst[4 * k + 1] = (uint8_t)(v >> 16);
+                dst[4 * k + 2] = (uint8_t)(v >> 8);
+                dst[4 * k + 3] = (uint8_t)v;
+            }
+            sectors++;
+        }
+        i += 4 + 1080;
+    }
+    cached_cylinder[d] = -1;            // the buffer held the write
+    if (sectors) {
+        __atomic_fetch_or(&floppyDirtyTracks[d][track >> 3], (uint8_t)(1u << (track & 7)),
+                          __ATOMIC_RELAXED);
+        floppyDirty[d] = 1;
+    }
+    printf("DF%d: wrote track %d, %d sectors\n", d, track, sectors);
+}
 #else
 static int drive_connected[4] = { 1, 0, 0, 0 };
+void floppyWriteByte(uint8_t b) { (void)b; }
+void floppyWriteDone(void) {}
+void floppyWriteAbort(void) {}
 #endif
+volatile uint8_t floppyDirty[2];
+volatile uint8_t floppyDirtyTracks[2][20];
 
 void floppyIndexReset(){
     
@@ -544,8 +628,9 @@ void floppyInsert(int drive){
     }
 #endif
 
-    if(df[drive].idMode !=0){
-        //Only Vaild drives have an ID Mode == 0 
+    if(df[drive].idMode < 0){
+        // frank-amiga: only drives Kickstart has identified (DF1's ID mode
+        // now comes back at every motor off, so not "!= 0")
         return;
     }
     
@@ -640,6 +725,10 @@ void floppySetState(){            //To be called when Writes to CIAB prb happen.
     //printf("%d: ",count);
     
     //ID mode... to identify external drives...
+     // frank-amiga: turning the motor on ends ID mode; the write is a
+     // normal one.
+     if (df[driveSelected].idMode > 0 && !(PRB & 0x80))
+         df[driveSelected].idMode = 0;
      if(df[driveSelected].idMode>0){   // Id mode
          // Report drive present (/DKRDY=0) only for drives that physically exist.
          // Drive 0 is always present (even with no ADF loaded). Drives 1-3 are only
@@ -675,6 +764,10 @@ void floppySetState(){            //To be called when Writes to CIAB prb happen.
         
         if(df[driveSelected].idMode==-1){   //is this the first time the motor has been turned off?
             df[driveSelected].idMode = 32;  //if so activate ID Mode
+        } else if (driveSelected != 0 && !(df[driveSelected].prb & 0x80)) {
+            // frank-amiga: an external drive reloads its ID at every motor
+            // off, so trackloaders can identify DF1 themselves at any time.
+            df[driveSelected].idMode = 32;
         }
         
         df[driveSelected].pra  |= 0x20;     //Drive not ready

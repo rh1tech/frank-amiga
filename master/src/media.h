@@ -27,6 +27,8 @@ bool media_upload(uint32_t target, const char *path);
  * connected at boot is connected now, though AmigaDOS only finds drives as
  * it boots (trackloaders see it). Path "none" ejects. */
 bool media_insert(int drive, const char *path);
+/* Main loop: saves written disk tracks back to their ADF files. */
+void media_poll(void);
 bool media_sdput(uint32_t psram_offset, uint32_t size, const char *path);
 
 #endif

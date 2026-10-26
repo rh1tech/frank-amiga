@@ -438,9 +438,7 @@ void blitter_execute(Chipset_t* chipset){
             
             chipset->bltsizh = 0; // all done;
             chipset->bltsizv = 0; // all done;
-            chipset->dmaconr = chipset->dmaconr & 49151; //clear blitter busy bit
-            //generate an interrupt!
-            putChipReg16[INTREQ](0x8040);
+            blitterFinished();   // frank-amiga: busy/interrupt when its time is up (DMA.c)
             
             
         }else{
@@ -622,8 +620,7 @@ void blitter_execute(Chipset_t* chipset){
             chipset->bltcdat = cdat;
             //chipset->bltddat = ddat;
             
-            chipset->dmaconr = chipset->dmaconr & 0xBFFF; //clear blitter busy bit
-            putChipReg16[INTREQ](0x8040); // generate an interrupt!
+            blitterFinished();   // frank-amiga: busy/interrupt when its time is up (DMA.c)
             return;
         }
     }

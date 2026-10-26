@@ -1431,6 +1431,27 @@ void diskCycle(void){
         
         if(chipset.dsklen & 0x3FFF){
             
+            // frank-amiga: DSKLEN WRITE — the words go to the drive
+            // (Floppy.c decodes the track's sectors into its ADF).
+            if (chipset.dsklen & 0x4000) {
+                for (int i = 0; i < turboFloppy; ++i) {
+                    floppyWriteByte(*chip_ptr(chipset.dskpt & CHIPTOP));
+                    floppyWriteByte(*chip_ptr((chipset.dskpt + 1) & CHIPTOP));
+                    chipset.dskpt += 2;
+                    chipset.dsklen -= 1;
+                    if ((chipset.dsklen & 0x3FFF) == 0) {
+                        floppyWriteDone();
+                        putChipReg16[INTREQ](0x8002);   //Disk block done INT
+                        return;
+                    }
+                }
+                return;
+            }
+
+            // frank-amiga: without ADKCON WORDSYNC the transfer starts at
+            // once instead of at the next sync word.
+            if (!(chipset.adkconr & 0x400))
+                floppySync = 1;
             
             //OS2+ Disk loading
             
@@ -2129,9 +2150,51 @@ int copperExecute(){
 
 
 
+// frank-amiga: the running blit's remaining time, in colour clocks
+// (state 3: computed, waiting to end).
+static int32_t blitTime;
+
+static int32_t blitEstimate(void) {
+    const int32_t h = chipset.bltsizh ? chipset.bltsizh : 64;
+    const int32_t v = chipset.bltsizv ? chipset.bltsizv : 1024;
+    if (chipset.bltcon1 & 1)
+        return 4 * v;                       // line: ~4 cycles a pixel
+    const int n = __builtin_popcount((chipset.bltcon0 >> 8) & 0xF);
+    return h * v * (n <= 2 ? 2 : n);        // cycles a word by channels
+}
+
+static void blitEnd(void) {
+    chipset.dmaconr &= 0xBFFF;              // BBUSY off
+    putChipReg16[INTREQ](0x8040);           // BLIT interrupt
+}
+
+void blitterFinished(void) {
+    if (blitTime <= 0)
+        blitEnd();
+}
+
+void blitterNewBlit(void) {
+    if (blitterState == 3) {
+        blitTime = 0;
+        blitterState = 0;
+        blitEnd();
+    }
+}
+
 int blitterExecute(){
     
     int state = blitterState;
+    if (state == 3) {
+        // Free odd slots stand for the even ones the blitter shares too.
+        blitTime -= 2;
+        if (blitTime <= 0) {
+            blitterState = 0;
+            blitEnd();
+        }
+        return 0;
+    }
+    if (state == 0 && (chipset.dmaconr & 0x4240) == 0x4240)
+        blitTime = blitEstimate();
     
     
     switch(state){
@@ -2184,7 +2247,7 @@ int blitterExecute(){
             
             //Immediate mode Blitter
             blitter_execute(&chipset);
-            state = 0;
+            state = blitTime > 0 ? 3 : 0;
             
             break;
             
@@ -2206,7 +2269,7 @@ int blitterExecute(){
             
             //Immediate mode Blitter
             blitter_execute(&chipset);
-            state = 0;
+            state = blitTime > 0 ? 3 : 0;
             
             break;
     }

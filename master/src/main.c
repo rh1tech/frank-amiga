@@ -315,6 +315,7 @@ static void main_poll(void) {
         usb_amiga_poll();
         input_poll();
         stream_poll();
+        media_poll();
     } else {
         bringup_poll();
     }

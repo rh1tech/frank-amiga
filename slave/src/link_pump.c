@@ -25,6 +25,7 @@
 #include "host_link.h"
 #include "HostRing.h"
 #include "upload.h"
+#include "../omega/Floppy.h"
 
 static link_t link;
 static link_session_t sess;
@@ -171,7 +172,7 @@ static void fill_chunk(bool resync) {
     host_ring_consume(n);
     h->magic = LINK_STREAM_MAGIC;
     h->seq = ++chunk_seq;
-    h->words = (uint16_t)n;
+    h->words = (uint16_t)(n | (floppyDirty[0] | floppyDirty[1] ? LINK_STREAM_WORDS_DIRTY : 0u));
     h->frame_off = frame_off;
     h->check = check ^ chunk_seq;
     pump_words += n;

@@ -23,6 +23,8 @@
 #include "debug.h"
 #include "Gayle.h"
 #include "Collision.h"
+#include "Floppy.h"
+#include "Blitter.h"
 
 // DMA pointers reach chip RAM only: Agnus keeps as many address bits as
 // its chip RAM range (2 MB: A1-A20) and ignores the rest of the high word.
@@ -327,6 +329,8 @@ void dsklen(uint16_t value){
 
     //printf("dsklen called: %04x (Lock:%d)\n",value,dskDMALock);
     
+    if (!(value & 0x8000))
+        floppyWriteAbort();     // frank-amiga: DMA off ends a write
     if(dskDMALock==2){
         chipset.dsklen = value; //a write of 0X8000 here is a secondary lock on the DMA to avoid accidental disk writes
         dskDMALock =0;
@@ -431,6 +435,7 @@ void bltsize(uint16_t value){
     chipset.bltsize = chipset.bltsizh;
 
     //Set to blitter busy
+    blitterNewBlit();   // frank-amiga: a previous blit's time ends now
     chipset.dmaconr =chipset.dmaconr | 0x4000;
 }
 

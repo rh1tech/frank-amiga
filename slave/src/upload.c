@@ -181,6 +181,26 @@ bool upload_handle(link_session_t *s, uint16_t op) {
         watchdog_reboot(0, 0, 0);
         for (;;) tight_loop_contents();
     }
+    case LINK_OP_DIRTY: {
+        const uint32_t d = h->arg0 & 1u;
+        uint8_t map[20];
+        uint32_t tracks = 0;
+        floppyDirty[d] = 0;     /* before taking the bits: a later write sets it again */
+        for (int i = 0; i < 20; i++) {
+            map[i] = __atomic_exchange_n(&floppyDirtyTracks[d][i], 0, __ATOMIC_RELAXED);
+            tracks += (uint32_t)__builtin_popcount(map[i]);
+        }
+        link_s_send_ctrl(s, LINK_OP_DIRTY | 1, tracks, 0, map, sizeof map);
+        return true;
+    }
+    case LINK_OP_DOWNLOAD: {
+        const uint8_t *base = target_base(h->arg0);
+        const bool ok = (h->arg0 == LINK_UP_DF0 || h->arg0 == LINK_UP_DF1) &&
+                        h->arg1 < LINK_DISK_TRACKS;
+        link_s_send_ctrl(s, LINK_OP_DOWNLOAD | 1, ok, h->arg1, NULL, 0);
+        if (ok) link_s_bulk_send(s, base + h->arg1 * LINK_TRACK_BYTES, LINK_TRACK_BYTES);
+        return true;
+    }
     case LINK_OP_INSERT:
         eject_only = h->arg1 == 0;
         insert_req = (int)h->arg0;

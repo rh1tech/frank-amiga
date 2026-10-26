@@ -25,22 +25,37 @@ Bench instruments (probes, chip IDs, capture devices) are in `tools/bench.conf`.
 /amiga/frank-amiga.ini      kick=/amiga/kick/kick13.rom
                             ext=/amiga/kick/aros-ext.bin   (optional, AROS)
                             df0=/amiga/adf/game.adf        (optional)
+                            df1=/amiga/adf/game-2.adf      (optional; connects DF1)
+                            drives=2                       (DF1 connected, empty)
+                            joykeys=arrows                 (off | arrows | numpad)
 /amiga/kick/                Kickstart images (your own licensed copies, or AROS)
 /amiga/adf/                 disk images
 ```
 
-At power-on the master uploads the configured ROMs and disk to the slave and
-starts the machine. Console (UART0, 115200): `df0 <path>` changes the disk,
-`kick`/`ext <path>` change ROMs and cold-start, `boot` rereads the ini,
-`reset` is Ctrl-Amiga-Amiga, `type`/`key`/`mouse` drive input, `stats`.
+At power-on the master uploads the configured ROMs and disks to the slave and
+starts the machine. Disks are writable: tracks a program writes are saved back
+into the ADF file on the card about a second later.
+
+## Controls
+
+- USB keyboard and mouse on the master's USB port. F12 opens the menu:
+  DF0/DF1 disk browser, Kickstart, reset, volume, keyboard joystick.
+- Joysticks: USB gamepad 1 is the joystick in port 2 (games), gamepad 2 the
+  one in port 1; d-pad or left stick, A fire, B second button. Without a pad,
+  `joykeys` makes the arrows (Right Ctrl/Alt fire) or the numpad (0/. fire)
+  port 2's joystick.
+- Console (UART0, 115200): `df0`/`df1 <path|none>` change disks, `kick`/`ext
+  <path>` change ROMs and cold-start, `boot` rereads the ini, `reset` is
+  Ctrl-Amiga-Amiga, `type`/`key`/`mouse`/`joy` drive input, `osd`/`osdkey`,
+  `vol`, `stats`.
 
 ## Status
 
-- M0 bring-up: clocks (both halves 504 MHz), PSRAM, link, HDMI, I2S, microSD.
-- M2/M3: the Omega core runs on the slave; its display/audio message stream
-  crosses the link; the master renders Denise and drives HDMI at 640x480@50,
-  locked to the emulated PAL frame (FS pacing). Keyboard input from the
-  master's console (`type`, `key`, `mouse`). DiagROM boots to its menu.
-- M4 (partial): Paula mixed on the master to the I2S DAC, rate-matched.
+- Both halves at 504 MHz; HDMI 640x480@50 locked to the emulated PAL frame,
+  Paula on the I2S DAC, microSD, USB HID.
+- Chipset: OCS with dual playfield, interlace (woven), collisions, audio
+  attach, overscan-aware vertical window, two floppy drives with writes.
+- Blits are computed at once but end (BBUSY, interrupt) after their real
+  duration.
 
 See `docs/bringup.md`.

@@ -27,5 +27,12 @@ typedef struct{
 int OblitterExecute(void);
 
 void blitter_execute(Chipset_t*);
+// frank-amiga (DMA.c): blitter_execute() computes a blit at once, but its
+// end (BBUSY clear, INTREQ BLIT) comes after the time the blit takes on the
+// real chip: programs that clear INTREQ and enable the blitter interrupt
+// right after BLTSIZE (Desert Dream) otherwise lose the interrupt.
+void blitterFinished(void);
+// A BLTSIZE write: ends a blit whose time is still running.
+void blitterNewBlit(void);
 
 #endif /* Blitter_h */

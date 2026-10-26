@@ -24,4 +24,7 @@ bool stream_poll(void);
 /* Queue an input event for the next request (link_stream.h LINK_EV_*). */
 bool stream_input(uint8_t type, uint8_t a, uint8_t b, uint8_t c);
 
+/* Set when the slave reports written disk tracks (media_poll() saves them). */
+extern volatile bool stream_disk_dirty;
+
 #endif

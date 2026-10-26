@@ -61,6 +61,15 @@ uint8_t floppyDataRead();
 void floppyInsert(int);
 // frank-amiga: makes DF1 present (before Kickstart probes the drives).
 void floppyConnect(int drive);
+// frank-amiga: disk writes (DSKLEN WRITE). Bytes of the written MFM stream,
+// then the end of the transfer: its sectors go into the selected drive's
+// ADF, which becomes dirty (floppyDirty, for the master to save).
+void floppyWriteByte(uint8_t b);
+void floppyWriteDone(void);
+void floppyWriteAbort(void);
+extern volatile uint8_t floppyDirty[2];
+// Written tracks (cylinder * 2 + side) by drive, a bit each.
+extern volatile uint8_t floppyDirtyTracks[2][20];
 uint8_t* floppyInit(int);   // returns the mfm data buffer
 void floppyIndexReset();
 

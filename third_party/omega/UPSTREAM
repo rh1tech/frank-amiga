@@ -8,3 +8,6 @@ Local change: Floppy.c step clears /CHNG only with a disk inserted.
 Local change: collisions — Chipset.c CLXCON/CLXDAT go to common/amiga/Collision.c; DMA.c feeds it bitplane blocks, armed sprites and line ends while a program reads CLXDAT.
 Local change: Audio.c ADKCON attach (USExVn/USExPn): modulating channel silent, words to the next channel's VOL/PER.
 Local change: Floppy.c DF1 (own ADF, track buffer, floppyConnect); DMA.c OMEGA_DYNAMIC_FIRST_LINE (image origin follows overscan bitplanes).
+Local change: disk writes (DMA.c DSKLEN WRITE -> Floppy.c decodes AmigaDOS sectors into the PSRAM ADF, /WPRO from ADF location, dirty-track bitmap), ADKCON WORDSYNC off starts DMA at once.
+Local change: blitter end timing — blitter_execute() still computes a blit at once, but BBUSY/INTREQ BLIT come after an estimate of its real duration (DMA.c blitTime, state 3).
+Local change: Floppy.c re-arms an external drive's ID mode at every motor off (trackloaders identify DF1); motor on ends ID mode.

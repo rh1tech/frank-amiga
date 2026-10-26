@@ -56,7 +56,18 @@ enum {
     LINK_OP_BOOT         = 0x0076,
     /* INSERT: arg0 = drive, arg1 = 0 eject / 1 insert the uploaded disk. */
     LINK_OP_INSERT       = 0x0078,
+    /* Disk write-back (the stream's chunks carry LINK_STREAM_WORDS_DIRTY
+     * while the slave has written tracks the master has not taken):
+     *   DIRTY     arg0 = drive; the ack's arg0 = tracks, payload = bitmap of
+     *             LINK_DISK_TRACKS bits (track = cylinder * 2 + side), now
+     *             the master's to save
+     *   DOWNLOAD  arg0 = LINK_UP_DF0/DF1, arg1 = track; ack, then the
+     *             track's LINK_TRACK_BYTES as a bulk from the slave */
+    LINK_OP_DIRTY        = 0x007A,
+    LINK_OP_DOWNLOAD     = 0x007C,
 };
+#define LINK_DISK_TRACKS 160u
+#define LINK_TRACK_BYTES (11u * 512u)
 
 enum {
     LINK_UP_ROM = 1,      /* Kickstart, 256 or 512 KB */
