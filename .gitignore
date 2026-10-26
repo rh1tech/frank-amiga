@@ -1,0 +1,10 @@
+build/
+**/build/
+ref/
+*.uf2
+*.elf
+*.bin
+*.adf
+*.rom
+logs/
+.DS_Store
