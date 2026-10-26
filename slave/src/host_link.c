@@ -491,6 +491,11 @@ bool host_frame_mark_peek(uint32_t *pos) {
     return true;
 }
 void host_frame_mark_pop(void) { frame_mark_tail++; }
+// Forget every pending mark: after the ring was dropped they may name
+// positions of an earlier lap (positions repeat every RING_SPAN words).
+void host_frame_marks_clear(void) {
+    frame_mark_tail = __atomic_load_n(&frame_mark_head, __ATOMIC_ACQUIRE);
+}
 uint32_t host_ring_tail(void) { return ring_tail; }
 uint32_t host_ring_span(void) { return RING_SPAN; }
 

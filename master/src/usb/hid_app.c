@@ -433,34 +433,23 @@ uint8_t usbhid_keycode_to_ascii(uint8_t code, uint8_t modifier) {
 //--------------------------------------------------------------------
 
 static void process_kbd_report(hid_keyboard_report_t const *report, hid_keyboard_report_t const *prev_report) {
-    uint8_t released_mods = prev_report->modifier & ~(report->modifier);
-    uint8_t pressed_mods = report->modifier & ~(prev_report->modifier);
-
-    if (released_mods & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT))
-        queue_key_action(0xE1, 0);
-    if (pressed_mods & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT))
-        queue_key_action(0xE1, 1);
-    if (released_mods & (KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_RIGHTCTRL))
-        queue_key_action(0xE0, 0);
-    if (pressed_mods & (KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_RIGHTCTRL))
-        queue_key_action(0xE0, 1);
-    if (released_mods & (KEYBOARD_MODIFIER_LEFTALT | KEYBOARD_MODIFIER_RIGHTALT))
-        queue_key_action(0xE2, 0);
-    if (pressed_mods & (KEYBOARD_MODIFIER_LEFTALT | KEYBOARD_MODIFIER_RIGHTALT))
-        queue_key_action(0xE2, 1);
+    /* frank-amiga: each modifier is its own key (HID 0xE0 + bit: L/R Ctrl,
+     * Shift, Alt, GUI) - the Amiga tells left from right - and there is no
+     * host-side repeat: the Amiga repeats keys itself. */
+    const uint8_t changed = report->modifier ^ prev_report->modifier;
+    for (int bit = 0; bit < 8; bit++)
+        if (changed & (1u << bit))
+            queue_key_action((uint8_t)(0xE0 + bit), (report->modifier >> bit) & 1);
 
     for (int i = 0; i < 6; i++) {
         uint8_t keycode = prev_report->keycode[i];
-        if (keycode && !find_keycode_in_report(report, keycode)) {
+        if (keycode && !find_keycode_in_report(report, keycode))
             queue_key_action(keycode, 0);
-            repeat_cancel(keycode);
-        }
     }
     for (int i = 0; i < 6; i++) {
         uint8_t keycode = report->keycode[i];
         if (keycode && !find_keycode_in_report(prev_report, keycode)) {
             queue_key_action(keycode, 1);
-            repeat_arm(keycode);
             uint8_t ch = usbhid_keycode_to_ascii(keycode, report->modifier);
             if (ch) usb_raw_char_push(ch);
         }

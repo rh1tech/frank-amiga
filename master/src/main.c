@@ -27,6 +27,8 @@
 #include "input.h"
 #include "stream.h"
 #include "media.h"
+#include "osd.h"
+#include "usb_amiga.h"
 #include "audio/audio.h"
 #include "video/hstx_video.h"
 #include "pico/multicore.h"
@@ -164,6 +166,8 @@ static void amiga_start(void) {
         return;
     }
     denise_frames_init(PSRAM_RECORDS);
+    osd_init();
+    usb_amiga_init();
     denise_c1_init();
     denise_audio_init();
     multicore_launch_core1(core1_amiga);
@@ -261,6 +265,18 @@ static void cmd_sdput(int argc, char **argv) {
     media_sdput((uint32_t)strtoul(argv[1], NULL, 16), (uint32_t)strtoul(argv[2], NULL, 0), argv[3]);
 }
 
+/* osd: toggle the menu; osdkey <up|down|left|right|enter|esc|pgup|pgdn>. */
+static void cmd_osd(int argc, char **argv) { osd_toggle(); }
+static void cmd_osdkey(int argc, char **argv) {
+    static const struct { const char *n; uint8_t hid; } k[] = {
+        {"up", 0x52}, {"down", 0x51}, {"left", 0x50}, {"right", 0x4F},
+        {"enter", 0x28}, {"esc", 0x29}, {"pgup", 0x4B}, {"pgdn", 0x4E},
+    };
+    for (int a = 1; a < argc; a++)
+        for (unsigned i = 0; i < sizeof k / sizeof k[0]; i++)
+            if (!strcmp(argv[a], k[i].n)) osd_key(k[i].hid, true);
+}
+
 /* vol <0..256>: output volume (256 = unity; default 128). */
 static void cmd_vol(int argc, char **argv) {
     if (argc > 1) audio_set_volume((uint32_t)atoi(argv[1]));
@@ -285,6 +301,7 @@ static void cmd_vol(int argc, char **argv) {
 
 static void main_poll(void) {
     if (amiga_running) {
+        usb_amiga_poll();
         input_poll();
         stream_poll();
     } else {
@@ -304,6 +321,8 @@ static const console_cmd_t cmds[] = {
     { "mouse",  cmd_mouse,  "mouse <dx> <dy> [buttons]" },
     { "reset",  cmd_reset,  "Ctrl-Amiga-Amiga" },
     { "vol",    cmd_vol,    "vol [0..256]: audio output volume" },
+    { "osd",    cmd_osd,    "toggle the on-screen menu (F12)" },
+    { "osdkey", cmd_osdkey, "osdkey <up|down|left|right|enter|esc|pgup|pgdn>..." },
     { "boot",   cmd_boot,   "reload frank-amiga.ini, upload, cold-start" },
     { "kick",   cmd_kick,   "kick <path>: change Kickstart and cold-start" },
     { "ext",    cmd_kick,   "ext <path|none>: extended ROM and cold-start" },

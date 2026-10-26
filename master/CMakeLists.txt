@@ -29,6 +29,8 @@ add_executable(frank-amiga-master
     src/stream.c
     src/input.c
     src/media.c
+    src/osd.c
+    src/usb_amiga.c
     src/denise/denise_c1.c
     src/denise/denise_frames.c
     src/denise/denise_audio.c

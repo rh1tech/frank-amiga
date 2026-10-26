@@ -127,12 +127,24 @@ static void fill_chunk(bool resync) {
     const uint32_t ring_words = host_ring_words();
     const uint32_t limit = avail < LINK_STREAM_PAYLOAD_WORDS ? avail : LINK_STREAM_PAYLOAD_WORDS;
     uint32_t n = 0;
+    if (limit && !msg_words(ring[slot])) {
+        /* Not at a message start: the stream is out of step (it should
+         * never be). Drop everything queued and every mark, and skip a
+         * sequence number so the master resynchronises at the next fresh
+         * frame start. */
+        pump_bad_headers++;
+        host_ring_consume(avail);
+        host_frame_marks_clear();
+        chunk_seq++;
+        avail = 0;
+    }
+    const uint32_t limit2 = avail < LINK_STREAM_PAYLOAD_WORDS ? avail : LINK_STREAM_PAYLOAD_WORDS;
     {
         uint32_t s = slot;
-        while (n < limit) {
+        while (n < limit2) {
             const uint32_t len = msg_words(ring[s]);
             if (!len) { pump_bad_headers++; break; }
-            if (n + len > limit) break;
+            if (n + len > limit2) break;
             n += len;
             s += len;
             if (s >= ring_words) s -= ring_words;

@@ -102,6 +102,7 @@ static void hold_core0(bool on) {
             const uint32_t n = host_ring_pending(&slot);
             if (n) host_ring_consume(n);
         }
+        host_frame_marks_clear();   /* their positions may be a lap old */
     }
 }
 

@@ -23,6 +23,7 @@ uint32_t host_ring_span(void);
  * oldest first. */
 bool host_frame_mark_peek(uint32_t *pos);
 void host_frame_mark_pop(void);
+void host_frame_marks_clear(void);
 
 /* Frames handed to the ring so far (once per VBL). */
 extern volatile uint32_t host_frames_emulated;

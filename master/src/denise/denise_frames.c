@@ -14,6 +14,7 @@
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "link_pins.h"
+#include "osd.h"
 #include <string.h>
 
 #define AMIGA_SOURCE_WIDTH 640u
@@ -288,11 +289,13 @@ void SCAN_FUNC(denise_row)(uint32_t row, uint32_t *out, uint32_t width) {
     const uint32_t y = row - image_y0 + image_skip;
     if (row < image_y0 || y >= AMIGA_SOURCE_HEIGHT) {
         scan_fill(out, 0, width, frame_border[active_frame]);
+        osd_overlay_row(row, out, width);
         return;
     }
     const uint32_t border = scan_expand_row(active_frame, y, out + image_x0);
     scan_fill(out, 0, image_x0, border);
     scan_fill(out, image_x0 + AMIGA_SOURCE_WIDTH, width, scan_right_border);
+    osd_overlay_row(row, out, width);
 }
 
 void denise_frames_init(void *records) {
