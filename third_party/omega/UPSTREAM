@@ -7,3 +7,4 @@ Local change: Blitter.c copy blits use per-blit minterm masks and a prefix-XOR a
 Local change: Floppy.c step clears /CHNG only with a disk inserted.
 Local change: collisions — Chipset.c CLXCON/CLXDAT go to common/amiga/Collision.c; DMA.c feeds it bitplane blocks, armed sprites and line ends while a program reads CLXDAT.
 Local change: Audio.c ADKCON attach (USExVn/USExPn): modulating channel silent, words to the next channel's VOL/PER.
+Local change: Floppy.c DF1 (own ADF, track buffer, floppyConnect); DMA.c OMEGA_DYNAMIC_FIRST_LINE (image origin follows overscan bitplanes).

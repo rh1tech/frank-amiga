@@ -22,6 +22,9 @@ void upload_set_running(bool on);
  * NULL. */
 const uint8_t *upload_rom(uint32_t *size);
 const uint8_t *upload_ext_rom(void);
-const uint8_t *upload_df0(void);
+/* LINK_BOOT_* flags the master booted us with. */
+uint32_t upload_boot_flags(void);
+/* The uploaded disk for DF0 / DF1, or NULL. */
+const uint8_t *upload_df(int drive);
 
 #endif

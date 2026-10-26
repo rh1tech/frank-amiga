@@ -31,6 +31,8 @@
 #include "upload.h"
 extern volatile uint32_t host_dpf_rows;
 #include "Collision.h"
+#include "DisplayLayout.h"
+#include "DisplayLayout.h"
 #include "../omega/Chipset.h"
 #include "../omega/CIA.h"
 #include "../omega/CPU.h"
@@ -251,12 +253,12 @@ static void __not_in_flash_func(emulation_loop)(void) {
         if (now >= next_report) {
             const uint32_t f = host_frames_emulated;
             printf("emu: %.1f frames/s, link %lu req %lu chunks %lu kwords "
-                   "%lu resyncs, audio drops %lu, bank swaps %lu, bplcon0 %04x, dpf rows %lu, clx %d, pc %06lx\n",
+                   "%lu resyncs, audio drops %lu, bank swaps %lu, bplcon0 %04x, dpf rows %lu, clx %d, line0 %d, pc %06lx\n",
                    (double)(f - last_frames) * 1e6 / (double)(now - next_report + 2000000u),
                    (unsigned long)pump_requests, (unsigned long)pump_chunks,
                    (unsigned long)(pump_words / 1000u), (unsigned long)pump_resyncs,
                    (unsigned long)hostAudioDrops, (unsigned long)chip_bank_swaps,
-                   chipset.bplcon0, (unsigned long)host_dpf_rows, clxActive != 0, (unsigned long)m68k_get_reg(NULL, M68K_REG_PC));
+                   chipset.bplcon0, (unsigned long)host_dpf_rows, clxActive != 0, omegaDirectFirstLine, (unsigned long)m68k_get_reg(NULL, M68K_REG_PC));
             next_report = now + 2000000u;
 #ifdef DMA_SLOT_STATS
             extern uint32_t dma_stat_slow, dma_stat_batched, dma_stat_skipped;
@@ -302,12 +304,17 @@ int main(void) {
     for (int i = 0; !rom && i < 40; i++) {
         sleep_ms(100);                  /* the master may upload and BOOT */
     }
-    const uint8_t *ext = NULL, *adf = NULL;
+    const uint8_t *ext = NULL, *adf = NULL, *adf1 = NULL;
+    bool df1_on = false;
     if (rom) {
         ext = upload_ext_rom();
-        adf = upload_df0();
-        printf("ROM: uploaded by the master (%lu KB)%s%s\n", (unsigned long)(rom_size / 1024u),
-               ext ? ", extended ROM" : "", adf ? ", DF0 disk" : "");
+        const uint32_t flags = upload_boot_flags();
+        if (flags & LINK_BOOT_DF0_DISK) adf = upload_df(0);
+        if (flags & LINK_BOOT_DF1_DISK) adf1 = upload_df(1);
+        df1_on = (flags & LINK_BOOT_DF1) != 0;
+        printf("ROM: uploaded by the master (%lu KB)%s%s%s\n", (unsigned long)(rom_size / 1024u),
+               ext ? ", extended ROM" : "", adf ? ", DF0 disk" : "",
+               adf1 ? ", DF1 disk" : df1_on ? ", DF1 empty" : "");
     } else {
         rom = (const uint8_t *)BOARD_ROM_FLASH_BASE;
         rom_size = BOARD_ROM_SIZE;
@@ -337,6 +344,15 @@ int main(void) {
         memset(df[0].mfmData, 0, BOARD_MAP_FLOPPY_SIZE);
         df[0].mfmData[0] = 0x44;
         df[0].mfmData[1] = 0x89;
+    }
+    if (df1_on) {
+        floppyConnect(1);
+        /* As DF0 above: floppyInsert() waits for the drive's ID mode. */
+        if (adf1 && floppyMountADF(1, adf1, FLOPPY_ADF_SIZE)) {
+            df[1].hasDisk = 1;
+            df[1].pra &= 0xFB;
+            printf("DF1: disk inserted\n");
+        }
     }
     upload_set_running(true);
     printf("Entering emulation loop\n");

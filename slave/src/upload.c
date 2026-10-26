@@ -29,8 +29,9 @@
 
 typedef struct {
     uint32_t magic;
-    uint32_t size[4];           /* by LINK_UP_* target */
-    uint32_t crc[4];
+    uint32_t size[5];           /* by LINK_UP_* target */
+    uint32_t crc[5];
+    uint32_t boot_flags;        /* LINK_BOOT_*, from the last BOOT */
     uint32_t check;             /* XOR of the above with the magic */
 } upload_rec_t;
 
@@ -40,8 +41,8 @@ static volatile upload_rec_t *rec(void) {
 
 static uint32_t rec_check(const volatile upload_rec_t *r) {
     uint32_t x = r->magic;
-    for (int i = 0; i < 4; i++) x ^= r->size[i] ^ (r->crc[i] * 2654435761u);
-    return x;
+    for (int i = 0; i < 5; i++) x ^= r->size[i] ^ (r->crc[i] * 2654435761u);
+    return x ^ r->boot_flags * 0x9E3779B1u;
 }
 
 static uint8_t *target_base(uint32_t target) {
@@ -49,17 +50,19 @@ static uint8_t *target_base(uint32_t target) {
     case LINK_UP_ROM: return (uint8_t *)(0x11000000u + BOARD_MAP_ROM_OFFSET);
     case LINK_UP_EXT: return (uint8_t *)(0x11000000u + BOARD_MAP_EXT_ROM_OFFSET);
     case LINK_UP_DF0: return (uint8_t *)(0x11000000u + BOARD_MAP_DF0_ADF_OFFSET);
+    case LINK_UP_DF1: return (uint8_t *)(0x11000000u + BOARD_MAP_DF1_ADF_OFFSET);
     default: return NULL;
     }
 }
 
 static uint32_t target_max(uint32_t target) {
-    return target == LINK_UP_DF0 ? FLOPPY_ADF_SIZE : 0x80000u;
+    return target == LINK_UP_DF0 || target == LINK_UP_DF1 ? FLOPPY_ADF_SIZE : 0x80000u;
 }
 
 /* ── Core 0 hold ───────────────────────────────────────────────────────── */
 static volatile bool hold_req, held, running;
 static volatile int insert_req = -1;      /* drive to (re)insert, or -1 */
+static volatile bool eject_only;          /* ... or just to empty */
 
 void upload_core0_frame(void) {
     if (hold_req) {
@@ -68,22 +71,31 @@ void upload_core0_frame(void) {
         held = false;
     }
     static int insert_wait;
-    if (insert_req >= 0) {
+    const int d = insert_req;
+    if (d == 0 || d == 1) {
+        const uint32_t target = d ? LINK_UP_DF1 : LINK_UP_DF0;
         /* Eject first and give the OS time to see the change. */
-        if (df[0].hasDisk) {
-            floppyInsert(0);          /* toggles: eject */
+        if (df[d].hasDisk) {
+            floppyInsert(d);          /* toggles: eject */
             insert_wait = 50;          /* 1 s with the drive empty */
         } else if (insert_wait > 0) {
             insert_wait--;
         } else {
             const volatile upload_rec_t *r = rec();
-            if (r->size[LINK_UP_DF0] == FLOPPY_ADF_SIZE &&
-                floppyMountADF(0, target_base(LINK_UP_DF0), FLOPPY_ADF_SIZE)) {
-                floppyInsert(0);
-                printf("upload: DF0 inserted\n");
+            floppyConnect(d);
+            if (!eject_only && r->size[target] == FLOPPY_ADF_SIZE &&
+                floppyMountADF(d, target_base(target), FLOPPY_ADF_SIZE)) {
+                floppyInsert(d);
+                if (!df[d].hasDisk) {   /* never identified (connected late) */
+                    df[d].hasDisk = 1;
+                    df[d].pra &= 0xFB;
+                }
+                printf("upload: DF%d inserted\n", d);
             }
             insert_req = -1;
         }
+    } else if (d >= 0) {
+        insert_req = -1;
     }
 }
 
@@ -157,13 +169,20 @@ bool upload_handle(link_session_t *s, uint16_t op) {
         hold_core0(false);
         return true;
     }
-    case LINK_OP_BOOT:
+    case LINK_OP_BOOT: {
+        volatile upload_rec_t *r = rec();
+        if (r->magic == REC_MAGIC && r->check == rec_check(r)) {
+            r->boot_flags = h->arg0;
+            r->check = rec_check(r);
+        }
         link_s_send_ctrl(s, LINK_OP_BOOT | 1, 0, 0, NULL, 0);
         printf("upload: boot requested, restarting\n");
         sleep_ms(20);
         watchdog_reboot(0, 0, 0);
         for (;;) tight_loop_contents();
+    }
     case LINK_OP_INSERT:
+        eject_only = h->arg1 == 0;
         insert_req = (int)h->arg0;
         link_s_send_ctrl(s, LINK_OP_INSERT | 1, 0, 0, NULL, 0);
         return true;
@@ -190,7 +209,12 @@ const uint8_t *upload_ext_rom(void) {
          ? target_base(LINK_UP_EXT) : NULL;
 }
 
-const uint8_t *upload_df0(void) {
-    return rec_valid(LINK_UP_DF0) && rec()->size[LINK_UP_DF0] == FLOPPY_ADF_SIZE
-         ? target_base(LINK_UP_DF0) : NULL;
+uint32_t upload_boot_flags(void) {
+    const volatile upload_rec_t *r = rec();
+    return r->magic == REC_MAGIC && r->check == rec_check(r) ? r->boot_flags : 0;
+}
+
+const uint8_t *upload_df(int drive) {
+    const uint32_t t = drive ? LINK_UP_DF1 : LINK_UP_DF0;
+    return rec_valid(t) && rec()->size[t] == FLOPPY_ADF_SIZE ? target_base(t) : NULL;
 }

@@ -11,7 +11,8 @@
 #include "link_session.h"
 
 typedef struct {
-    char kick[128], ext[128], df0[128];
+    char kick[128], ext[128], df0[128], df1[128];
+    bool drive1;                /* DF1 connected (also when df1 is set) */
     uint8_t joykeys;            /* usb_amiga.h JOYKEYS_* */
 } media_config_t;
 extern media_config_t media_config;
@@ -22,8 +23,10 @@ bool media_load_config(void);
 /* Upload the configured ROMs and disk, then reboot the slave from them. */
 bool media_boot(void);
 bool media_upload(uint32_t target, const char *path);
-/* Change the disk in DF0 while the machine runs. */
-bool media_insert_df0(const char *path);
+/* Change the disk in DF0/DF1 while the machine runs. A DF1 that was not
+ * connected at boot is connected now, though AmigaDOS only finds drives as
+ * it boots (trackloaders see it). Path "none" ejects. */
+bool media_insert(int drive, const char *path);
 bool media_sdput(uint32_t psram_offset, uint32_t size, const char *path);
 
 #endif

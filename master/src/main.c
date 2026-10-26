@@ -262,7 +262,12 @@ static void cmd_kick(int argc, char **argv) {
 /* df0 <path>: change the disk in DF0 while running. */
 static void cmd_df0(int argc, char **argv) {
     if (argc < 2) { printf("df0=%s\n", media_config.df0); return; }
-    media_insert_df0(argv[1]);
+    media_insert(0, argv[1]);
+}
+
+static void cmd_df1(int argc, char **argv) {
+    if (argc < 2) { printf("df1=%s\n", media_config.df1); return; }
+    media_insert(1, argv[1]);
 }
 
 /* sdput <psram offset hex> <bytes> <path>: save master PSRAM to the SD. */
@@ -334,6 +339,7 @@ static const console_cmd_t cmds[] = {
     { "kick",   cmd_kick,   "kick <path>: change Kickstart and cold-start" },
     { "ext",    cmd_kick,   "ext <path|none>: extended ROM and cold-start" },
     { "df0",    cmd_df0,    "df0 <path>: change the disk in DF0" },
+    { "df1",    cmd_df1,    "df1 <path>: change the disk in DF1" },
     { "sdput",  cmd_sdput,  "sdput <psram off hex> <bytes> <path>: save to SD" },
     BRINGUP_COMMANDS
     { NULL, NULL, NULL },

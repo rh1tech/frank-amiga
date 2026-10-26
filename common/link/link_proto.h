@@ -62,6 +62,11 @@ enum {
     LINK_UP_ROM = 1,      /* Kickstart, 256 or 512 KB */
     LINK_UP_EXT = 2,      /* extended ROM at 0xE00000, 512 KB */
     LINK_UP_DF0 = 3,      /* raw ADF for DF0, 901120 bytes */
+    LINK_UP_DF1 = 4,      /* raw ADF for DF1 (also connects the drive) */
+    /* BOOT arg0 flags */
+    LINK_BOOT_DF1 = 1,       /* DF1 connected                          */
+    LINK_BOOT_DF0_DISK = 2,  /* DF0 has the uploaded disk               */
+    LINK_BOOT_DF1_DISK = 4,  /* DF1 has the uploaded disk               */
 };
 #define LINK_UPLOAD_CHUNK (16u * 1024u)
 

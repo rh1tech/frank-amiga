@@ -50,8 +50,8 @@ typedef struct{
     uint8_t *mfmData;
 }Fd_t;
 
-// Only DF0 takes disks. DF1-DF3 exist solely so the drive-select and ID
-// sequences see unconnected drives.
+// DF0 and (once connected) DF1 take disks. The others exist solely so the
+// drive-select and ID sequences see unconnected drives.
 extern Fd_t df[4];
 extern int floppySync;
 extern int driveSelected;
@@ -59,6 +59,8 @@ extern int driveSelected;
 void floppyEject();
 uint8_t floppyDataRead();
 void floppyInsert(int);
+// frank-amiga: makes DF1 present (before Kickstart probes the drives).
+void floppyConnect(int drive);
 uint8_t* floppyInit(int);   // returns the mfm data buffer
 void floppyIndexReset();
 

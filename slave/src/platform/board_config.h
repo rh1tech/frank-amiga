@@ -39,6 +39,7 @@
 #define BOARD_MAP_RTG_VRAM_OFFSET  0x400000u
 #define BOARD_MAP_ROM_OFFSET       0x500000u
 #define BOARD_MAP_DF0_ADF_OFFSET   0x400000u
+#define BOARD_MAP_DF1_ADF_OFFSET   0x600000u
 #define BOARD_MAP_EXT_ROM_OFFSET   0x700000u
 #define BOARD_MAP_UPLOAD_REC_OFFSET 0x7FF100u
 #define BOARD_MAP_DF0_OFFSET       0x580000u
@@ -55,7 +56,7 @@
 #endif
 #define BOARD_MAP_FAST_RAM_SIZE    (OMEGA_FAST_RAM ? 0x200000u : 0u)
 #define BOARD_MAP_RTG_VRAM_SIZE    0x100000u
-#define BOARD_MAP_FLOPPY_SIZE      0x004000u   // 16 KB (one DF0 MFM track)
+#define BOARD_MAP_FLOPPY_SIZE      0x004000u   // 16 KB (one DF0 MFM track; DF1's follows)
 
 // Kickstart image in the slave's flash (M2: written there over SWD with
 // tools/flash_rom.sh). Later the master uploads it over the link instead.

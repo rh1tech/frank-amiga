@@ -72,7 +72,8 @@ void __not_in_flash_func(osd_overlay_row)(uint32_t row, uint32_t *out, uint32_t 
 typedef enum { M_MAIN, M_FILES } mode_t;
 static mode_t mode;
 static int sel, top;
-static int files_target;                   /* 0: DF0, 1: Kickstart */
+static int files_target;                   /* T_DF0, T_DF1, T_KICK */
+enum { T_DF0, T_DF1, T_KICK };
 #define MAX_FILES 256
 static char (*files)[64];                  /* names, in PSRAM */
 static int nfiles;
@@ -87,7 +88,7 @@ static const char *base(const char *path) {
     return b ? b + 1 : path;
 }
 
-enum { I_DF0, I_KICK, I_RESET, I_VOL, I_JOY, I_EXIT, I_COUNT };
+enum { I_DF0, I_DF1, I_KICK, I_RESET, I_VOL, I_JOY, I_EXIT, I_COUNT };
 
 static void draw(void) {
     char line[COLS + 1];
@@ -96,6 +97,8 @@ static void draw(void) {
         put(0, "        frank-amiga  (F12)");
         snprintf(line, sizeof line, " DF0:  %.28s", media_config.df0[0] ? base(media_config.df0) : "(empty)");
         put(2 + I_DF0, line);
+        snprintf(line, sizeof line, " DF1:  %.28s", media_config.df1[0] ? base(media_config.df1) : "(empty)");
+        put(2 + I_DF1, line);
         snprintf(line, sizeof line, " Kick: %.28s", base(media_config.kick));
         put(2 + I_KICK, line);
         put(2 + I_RESET, " Reset (Ctrl-Amiga-Amiga)");
@@ -107,7 +110,8 @@ static void draw(void) {
         put(ROWS - 1, " up/down, Enter, Esc");
         highlight = (uint8_t)(2 + sel);
     } else {
-        put(0, files_target ? " Kickstart (/amiga/kick)" : " Disk for DF0 (/amiga/adf)");
+        put(0, files_target == T_KICK ? " Kickstart (/amiga/kick)"
+             : files_target == T_DF1 ? " Disk for DF1 (/amiga/adf)" : " Disk for DF0 (/amiga/adf)");
         for (int i = 0; i < LIST_ROWS && top + i < nfiles; i++) {
             snprintf(line, sizeof line, " %.34s", files[top + i]);
             put(2 + i, line);
@@ -138,9 +142,9 @@ static void load_files(const char *dir) {
 static void choose_file(void) {
     if (!nfiles) return;
     char path[128];
-    snprintf(path, sizeof path, "%s/%s", files_target ? "/amiga/kick" : "/amiga/adf", files[sel]);
+    snprintf(path, sizeof path, "%s/%s", files_target == T_KICK ? "/amiga/kick" : "/amiga/adf", files[sel]);
     visible = false;                       /* show the machine while it loads */
-    if (files_target) {
+    if (files_target == T_KICK) {
         snprintf(media_config.kick, sizeof media_config.kick, "0:%s", path);
         /* An extended ROM only belongs to AROS. */
         if (!strstr(files[sel], "aros")) media_config.ext[0] = 0;
@@ -148,10 +152,10 @@ static void choose_file(void) {
         sleep_ms(300);
         stream_start();
     } else {
-        media_insert_df0(path);
+        media_insert(files_target == T_DF1, path);
     }
     mode = M_MAIN;
-    sel = files_target ? I_KICK : I_DF0;
+    sel = files_target == T_KICK ? I_KICK : files_target == T_DF1 ? I_DF1 : I_DF0;
 }
 
 void osd_key(uint8_t hid, bool down) {
@@ -172,15 +176,18 @@ void osd_key(uint8_t hid, bool down) {
         }
         break;
     case 0x29:                                                  /* Esc */
-        if (mode == M_FILES) { mode = M_MAIN; sel = files_target ? I_KICK : I_DF0; }
+        if (mode == M_FILES) {
+            mode = M_MAIN;
+            sel = files_target == T_KICK ? I_KICK : files_target == T_DF1 ? I_DF1 : I_DF0;
+        }
         else visible = false;
         break;
     case 0x28: case 0x58:                                       /* Enter */
         if (mode == M_FILES) { choose_file(); break; }
         switch (sel) {
-        case I_DF0: case I_KICK:
-            files_target = sel == I_KICK;
-            load_files(files_target ? "0:/amiga/kick" : "0:/amiga/adf");
+        case I_DF0: case I_DF1: case I_KICK:
+            files_target = sel == I_KICK ? T_KICK : sel == I_DF1 ? T_DF1 : T_DF0;
+            load_files(files_target == T_KICK ? "0:/amiga/kick" : "0:/amiga/adf");
             mode = M_FILES;
             sel = top = 0;
             break;

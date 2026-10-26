@@ -422,44 +422,65 @@ static int ADF2MFM_track_from_mem(const uint8_t *adf, uint32_t size,
     return 1;
 }
 
-static const uint8_t *df0_adf;
-static uint32_t df0_adf_size;
-static int df0_cached_cylinder = -1;
-static int df0_cached_side = -1;
+// frank-amiga: DF0 and DF1 take disks, each with its own ADF and track
+// buffer (DF1's right after DF0's).
+#define FLOPPY_DISK_DRIVES 2
+#define drive_track_cache(d) (df0_track_cache + (d) * 0x4000)
+static const uint8_t *drive_adf[FLOPPY_DISK_DRIVES];
+static int cached_cylinder[FLOPPY_DISK_DRIVES] = { -1, -1 };
+static int cached_side[FLOPPY_DISK_DRIVES] = { -1, -1 };
 
 static int floppyEnsureTrackCached(int drive) {
-    if (drive != 0 || !df0_adf)
+    if (drive >= FLOPPY_DISK_DRIVES || !drive_adf[drive])
         return 0;
-    if (df0_cached_cylinder == df[0].cylinder &&
-        df0_cached_side == df[0].side)
+    if (cached_cylinder[drive] == df[drive].cylinder &&
+        cached_side[drive] == df[drive].side)
         return 1;
-    if (!ADF2MFM_track_from_mem(df0_adf, df0_adf_size,
-                                df[0].cylinder, df[0].side,
-                                df0_track_cache))
+    if (!ADF2MFM_track_from_mem(drive_adf[drive], FLOPPY_ADF_SIZE,
+                                df[drive].cylinder, df[drive].side,
+                                drive_track_cache(drive)))
         return 0;
-    df0_cached_cylinder = df[0].cylinder;
-    df0_cached_side = df[0].side;
+    cached_cylinder[drive] = df[drive].cylinder;
+    cached_side[drive] = df[drive].side;
     return 1;
 }
 
-int floppyMountADF(int drive, const uint8_t *adf, uint32_t size) {
-    if (drive != 0 || !adf || size != FLOPPY_ADF_SIZE)
-        return 0;
-    df0_adf = adf;
-    df0_adf_size = size;
-    df0_cached_cylinder = -1;
-    df0_cached_side = -1;
-    df[0].mfmData = df0_track_cache;
-    df[0].hasDisk = 0;
-
-    // Before insertion expose an invalid header rather than mounted data, so
-    // Kickstart can finish its no-disk retry and display the hand screen.
-    volatile uint32_t *track = (volatile uint32_t *)df0_track_cache;
+// An empty drive's track: a sync word and nothing else.
+static void floppyEmptyTrack(int drive) {
+    volatile uint32_t *track = (volatile uint32_t *)drive_track_cache(drive);
     track[0] = 0x8944u;
     for (int i = 1; i < DF0_TRACK_WORDS; i++)
         track[i] = 0;
+}
+
+int floppyMountADF(int drive, const uint8_t *adf, uint32_t size) {
+    if (drive >= FLOPPY_DISK_DRIVES || !adf || size != FLOPPY_ADF_SIZE)
+        return 0;
+    drive_adf[drive] = adf;
+    cached_cylinder[drive] = -1;
+    cached_side[drive] = -1;
+    df[drive].mfmData = drive_track_cache(drive);
+    df[drive].hasDisk = 0;
+
+    // Before insertion expose an invalid header rather than mounted data, so
+    // Kickstart can finish its no-disk retry and display the hand screen.
+    floppyEmptyTrack(drive);
     return 1;
 }
+
+// DF1 present (an external drive, detected by Kickstart at boot).
+static int drive_connected[4] = { 1, 0, 0, 0 };
+void floppyConnect(int drive) {
+    if (drive < FLOPPY_DISK_DRIVES) {
+        drive_connected[drive] = 1;
+        if (!df[drive].mfmData) {
+            df[drive].mfmData = drive_track_cache(drive);
+            floppyEmptyTrack(drive);
+        }
+    }
+}
+#else
+static int drive_connected[4] = { 1, 0, 0, 0 };
 #endif
 
 void floppyIndexReset(){
@@ -471,9 +492,10 @@ void floppyIndexReset(){
 uint8_t floppyDataRead(){ //this function should be called by the DMA
 
 #ifdef PICO_BUILD
-    // DF0 holds one track: the ADF's current one, or the empty drive's.
-    int streamed = driveSelected == 0;
-    if (streamed && df[0].hasDisk && !floppyEnsureTrackCached(0))
+    // DF0/DF1 hold one track: the ADF's current one, or the empty drive's.
+    int streamed = driveSelected < FLOPPY_DISK_DRIVES;
+    if (streamed && df[driveSelected].hasDisk &&
+        !floppyEnsureTrackCached(driveSelected))
         return 0;
     int position = streamed
         ? df[driveSelected].index
@@ -513,9 +535,14 @@ uint8_t floppyDataRead(){ //this function should be called by the DMA
 
 
 void floppyInsert(int drive){
+#ifdef PICO_BUILD
+    if (drive >= FLOPPY_DISK_DRIVES || !drive_connected[drive])
+        return;     // only DF0 and a connected DF1 take disks
+#else
     if(drive != 0){
         return;     // only DF0 takes disks
     }
+#endif
 
     if(df[drive].idMode !=0){
         //Only Vaild drives have an ID Mode == 0 
@@ -529,7 +556,7 @@ void floppyInsert(int drive){
         printf("Disk ejected from df%d:\n",drive);
     }else{
 #ifdef PICO_BUILD
-        if (drive == 0 && df0_adf && !floppyEnsureTrackCached(0))
+        if (drive_adf[drive] && !floppyEnsureTrackCached(drive))
             return;
 #endif
         df[drive].hasDisk = 1;
@@ -555,13 +582,13 @@ uint8_t* floppyInit(int drive){
     df[drive].pra  &= 0xEF;   // cylinder 0 (bit4=0)
     df[drive].pra  |= 0x20;   // drive not ready (/DKRDY=1, no disk)
 #ifdef PICO_BUILD
-    // Only DF0 has an MFM buffer (in PSRAM); DF1-DF3 are unconnected.
+    // DF0 always has an MFM track buffer (in PSRAM); DF1 once connected.
     df[drive].mfmData = drive == 0 ? psram_ptr(PSRAM_DF0_OFFSET) : NULL;
-    if (drive == 0) {
-        df0_adf = NULL;
-        df0_adf_size = 0;
-        df0_cached_cylinder = -1;
-        df0_cached_side = -1;
+    if (drive < FLOPPY_DISK_DRIVES) {
+        drive_adf[drive] = NULL;
+        cached_cylinder[drive] = -1;
+        cached_side[drive] = -1;
+        drive_connected[drive] = drive == 0;
     }
 #else
     df[drive].mfmData = drive == 0 ? df0_mfm_image : NULL;
@@ -618,7 +645,7 @@ void floppySetState(){            //To be called when Writes to CIAB prb happen.
          // Drive 0 is always present (even with no ADF loaded). Drives 1-3 are only
          // present if an ADF is loaded. Without this distinction, the ROM sees four
          // 3.5" DD drives, times out reading all of them, then falls to ROM disk.
-         if(driveSelected == 0 || df[driveSelected].hasDisk){
+         if(drive_connected[driveSelected] || df[driveSelected].hasDisk){
              df[driveSelected].pra  &= 0xDF;  // /DKRDY=0 → drive present, ID=0x00000000
          }
          df[driveSelected].idMode -=1;
@@ -660,7 +687,7 @@ void floppySetState(){            //To be called when Writes to CIAB prb happen.
         // Drive 0 is always present; without this, KS 2.04's 200-read polling
         // loop sees /DKRDY=1 and falls back to its internal ROM disk instead
         // of showing the insert-disk screen when no ADF is loaded.
-        if(df[driveSelected].hasDisk || driveSelected == 0){
+        if(df[driveSelected].hasDisk || drive_connected[driveSelected]){
             df[driveSelected].pra  &= 0xDF;  // /DKRDY=0 → drive ready
         } else {
             df[driveSelected].pra  |= 0x20;  // non-existent drive → not ready

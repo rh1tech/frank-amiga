@@ -1030,6 +1030,49 @@ static void rotatedTailEndOfLine(void) {
     }
 }
 
+#if OMEGA_DYNAMIC_FIRST_LINE
+// frank-amiga: the HDMI output shows image rows DIRECT_SHOWN_FIRST ..
+// +DIRECT_SHOWN_ROWS-1 (PAL 640x480: 240 of the 256). Each frame notes the
+// beam lines that fetched bitplanes; when they leave that window the image's
+// first line moves just enough to bring them back (the top wins when they
+// do not fit), once the same move was wanted for a few frames in a row.
+#define DIRECT_SHOWN_FIRST 8
+#define DIRECT_SHOWN_ROWS 240
+#define DIRECT_FIRST_LINE_STD 44
+#define DIRECT_FIRST_LINE_MIN 20
+#define DIRECT_SETTLE_FRAMES 5
+int omegaDirectFirstLine = DIRECT_FIRST_LINE_STD;
+static int contentTop = 0x7fff, contentBottom = -1;
+static int wantFirst = DIRECT_FIRST_LINE_STD, wantFrames;
+
+static void directWindowFrame(void) {
+    const int top = contentTop, bottom = contentBottom;
+    contentTop = 0x7fff;
+    contentBottom = -1;
+    if (bottom < 0)
+        return;                         // no bitplanes: keep the window
+    int first = DIRECT_FIRST_LINE_STD;
+    if (bottom > first + DIRECT_SHOWN_FIRST + DIRECT_SHOWN_ROWS - 1)
+        first = bottom - (DIRECT_SHOWN_FIRST + DIRECT_SHOWN_ROWS - 1);
+    if (top < first + DIRECT_SHOWN_FIRST)
+        first = top - DIRECT_SHOWN_FIRST;
+    if (first < DIRECT_FIRST_LINE_MIN)
+        first = DIRECT_FIRST_LINE_MIN;
+    if (first == omegaDirectFirstLine) {
+        wantFrames = 0;
+        return;
+    }
+    if (first != wantFirst) {
+        wantFirst = first;
+        wantFrames = 0;
+    }
+    if (++wantFrames >= DIRECT_SETTLE_FRAMES) {
+        omegaDirectFirstLine = first;
+        wantFrames = 0;
+    }
+}
+#endif
+
 // End of a line (rare): kept out of the per-slot path so dma_run() stays
 // small and saves few registers.
 static void __attribute__((noinline)) dmaEndOfLine(void) {
@@ -1040,6 +1083,12 @@ static void __attribute__((noinline)) dmaEndOfLine(void) {
     rotatedTailEndOfLine();
 
     audioLine(lineLast + 1);
+#if OMEGA_DYNAMIC_FIRST_LINE
+    if (bitplaneLine.loresWords | bitplaneLine.hiresWords) {
+        if (internal.vPos < contentTop) contentTop = internal.vPos;
+        contentBottom = internal.vPos;
+    }
+#endif
     if (clxActive)
         clxLineEnd();
     if (hostDirectActive) {
@@ -1073,6 +1122,9 @@ static void __attribute__((noinline)) dmaEndOfLine(void) {
         copperWaitPosition = 0;
         spriteFrameStart();
         clxFrame();
+#if OMEGA_DYNAMIC_FIRST_LINE
+        directWindowFrame();
+#endif
 
         //Reset Copper.
         putChipReg16[COPJMP1](0);

@@ -59,6 +59,7 @@ target_compile_definitions(frank-amiga-slave PRIVATE ${FRANK_DEFINITIONS}
     OMEGA_HDMI_AUDIO=0
     OMEGA_AUDIO_OUTPUT=1         # Paula line records, mixed on the master
     OMEGA_VIDEO_STANDARD=1       # PAL
+    OMEGA_DYNAMIC_FIRST_LINE=1   # keep overscan bitplanes in 640x480's 240 rows
     OMEGA_ENABLE_SDCARD=0
     OMEGA_ENABLE_FLASH_FLOPPY=0
     OMEGA_ENABLE_USB_HOST=0

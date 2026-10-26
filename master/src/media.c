@@ -7,6 +7,8 @@
  *   kick=/amiga/kick/kick13.rom     Kickstart (256 or 512 KB)
  *   ext=/amiga/kick/aros-ext.bin    optional extended ROM (AROS)
  *   df0=/amiga/adf/workbench.adf    optional disk in DF0
+ *   df1=/amiga/adf/disk2.adf        optional disk in DF1 (connects DF1)
+ *   drives=2                        DF1 connected even with no disk
  *   joykeys=arrows                  keyboard joystick in port 2: off, arrows
  *                                   (Right Ctrl/Alt fire), numpad (0 . fire)
  * Uploads go over the link (link_proto.h LINK_OP_UPLOAD_*) with the stream
@@ -15,6 +17,7 @@
 #include "media.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "pico/stdlib.h"
@@ -127,11 +130,14 @@ bool media_load_config(void) {
         if (!strcmp(k, "kick")) prefix_path(media_config.kick, sizeof media_config.kick, v);
         else if (!strcmp(k, "ext")) prefix_path(media_config.ext, sizeof media_config.ext, v);
         else if (!strcmp(k, "df0")) prefix_path(media_config.df0, sizeof media_config.df0, v);
+        else if (!strcmp(k, "df1")) prefix_path(media_config.df1, sizeof media_config.df1, v);
+        else if (!strcmp(k, "drives")) media_config.drive1 = atoi(v) >= 2;
         else if (!strcmp(k, "joykeys")) media_config.joykeys = usb_amiga_joykeys_parse(v);
     }
     f_close(&f);
-    printf("media: kick=%s ext=%s df0=%s\n", media_config.kick, media_config.ext,
-           media_config.df0);
+    if (media_config.df1[0]) media_config.drive1 = true;
+    printf("media: kick=%s ext=%s df0=%s df1=%s%s\n", media_config.kick, media_config.ext,
+           media_config.df0, media_config.df1, media_config.drive1 ? "" : " (no DF1)");
     return media_config.kick[0] != 0;
 }
 
@@ -140,19 +146,35 @@ bool media_boot(void) {
     stream_stop();
     bool ok = media_upload(LINK_UP_ROM, media_config.kick);
     if (ok && media_config.ext[0]) ok = media_upload(LINK_UP_EXT, media_config.ext);
-    if (ok && media_config.df0[0]) media_upload(LINK_UP_DF0, media_config.df0);
-    if (ok) ok = ctrl(LINK_OP_BOOT, 0, 0);
+    uint32_t flags = media_config.drive1 ? LINK_BOOT_DF1 : 0;
+    if (ok && media_config.df0[0] && media_upload(LINK_UP_DF0, media_config.df0))
+        flags |= LINK_BOOT_DF0_DISK;
+    if (ok && media_config.df1[0] && media_upload(LINK_UP_DF1, media_config.df1))
+        flags |= LINK_BOOT_DF1_DISK;
+    if (ok) ok = ctrl(LINK_OP_BOOT, flags, 0);
     printf("media: boot %s\n", ok ? "sent" : "FAILED");
     return ok;
 }
 
-bool media_insert_df0(const char *path) {
+bool media_insert(int drive, const char *path) {
+    char *dst = drive ? media_config.df1 : media_config.df0;
+    if (!strcmp(path, "none")) {             /* eject */
+        stream_stop();
+        const bool ok = ctrl(LINK_OP_INSERT, (uint32_t)drive, 0);
+        stream_start();
+        if (ok) dst[0] = 0;
+        return ok;
+    }
     char p[128];
     prefix_path(p, sizeof p, path);
     stream_stop();
-    const bool ok = media_upload(LINK_UP_DF0, p) && ctrl(LINK_OP_INSERT, 0, 1);
+    const bool ok = media_upload(drive ? LINK_UP_DF1 : LINK_UP_DF0, p) &&
+                    ctrl(LINK_OP_INSERT, (uint32_t)drive, 1);
     stream_start();
-    if (ok) snprintf(media_config.df0, sizeof media_config.df0, "%s", p);
+    if (ok) {
+        snprintf(dst, 128, "%s", p);
+        if (drive) media_config.drive1 = true;
+    }
     return ok;
 }
 

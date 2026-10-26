@@ -28,7 +28,15 @@ enum {
 // bitplanes with the Copper) need no per-layout anchor, and the borders
 // around a smaller window show their own lines.
 #if OMEGA_VIDEO_STANDARD == OMEGA_VIDEO_PAL
+#if OMEGA_DYNAMIC_FIRST_LINE
+// frank-amiga: the display shows fewer rows than the image (240 of 256), so
+// DMA.c moves the image's first line to keep the bitplanes of overscan
+// screens on screen (see directWindowFrame()).
+extern int omegaDirectFirstLine;
+#define OMEGA_DIRECT_FIRST_LINE omegaDirectFirstLine
+#else
 #define OMEGA_DIRECT_FIRST_LINE 44
+#endif
 #define OMEGA_DIRECT_ROWS 256
 #else
 #define OMEGA_DIRECT_FIRST_LINE 23
