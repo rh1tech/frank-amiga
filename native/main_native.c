@@ -353,6 +353,32 @@ int main(int argc, char **argv) {
             chipset.joy0dat = (uint16_t)(v << 8 | h);
         }
 
+        // frank-amiga: OMEGA_DF0_SWAP=<vbl>:<adf> ejects DF0 at that frame and
+        // inserts the other disk 25 frames later (the board's df0 command).
+        {
+            static long swapAt = -2;
+            static char swapPath[512];
+            if (swapAt == -2) {
+                const char *e = getenv("OMEGA_DF0_SWAP");
+                swapAt = -1;
+                if (e && sscanf(e, "%ld:%511s", &swapAt, swapPath) != 2) swapAt = -1;
+            }
+            if (swapAt >= 0 && (long)native_frame_counter == swapAt && df[0].hasDisk) {
+                floppyInsert(0);                      /* toggles: eject */
+                printf("  vbl=%lu DF0 ejected\n", native_frame_counter);
+            }
+            if (swapAt >= 0 && (long)native_frame_counter == swapAt + 25 && !df[0].hasDisk) {
+                int fd = open(swapPath, O_RDONLY);
+                if (fd >= 0) {
+                    ADF2MFM(fd, df[0].mfmData);
+                    close(fd);
+                    floppyInsert(0);
+                    printf("  vbl=%lu DF0 inserted %s\n", native_frame_counter, swapPath);
+                }
+                swapAt = -1;
+            }
+        }
+
         // Kickstart only accepts a disk-change once the drive has finished
         // ID mode (df[0].idMode == 0).  Keep trying from insertAt onward
         // until floppyInsert latches hasDisk.

@@ -72,7 +72,7 @@ void upload_core0_frame(void) {
         /* Eject first and give the OS time to see the change. */
         if (df[0].hasDisk) {
             floppyInsert(0);          /* toggles: eject */
-            insert_wait = 25;
+            insert_wait = 50;          /* 1 s with the drive empty */
         } else if (insert_wait > 0) {
             insert_wait--;
         } else {

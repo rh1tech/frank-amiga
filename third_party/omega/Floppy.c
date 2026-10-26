@@ -696,7 +696,11 @@ void floppySetState(){            //To be called when Writes to CIAB prb happen.
         // A real Amiga drive keeps /CHNG asserted after an insertion or
         // ejection until the controller steps the head. Clearing it merely on
         // drive selection makes a waiting Kickstart miss runtime insertion.
-        df[driveSelected].pra |= 0x04;
+        // frank-amiga: only with a disk in the drive; an empty drive keeps
+        // /CHNG asserted however often it steps (trackloaders step and poll
+        // /CHNG to wait for the next disk).
+        if (df[driveSelected].hasDisk)
+            df[driveSelected].pra |= 0x04;
         
         //floppySync = 0;
         
