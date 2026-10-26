@@ -32,6 +32,7 @@
 #include "debug.h"
 
 #include "Floppy.h"
+#include "Collision.h"
 #include "VideoStandard.h"
 #include "DisplayLayout.h"
 
@@ -711,6 +712,8 @@ static int displayWindowContainsLine(int vpos) {
 static void __attribute__((noinline)) hiresPeekedWord(int row, int x,
                                                       uint16_t p1, uint16_t p2,
                                                       uint16_t p3, uint16_t p4) {
+    if (clxActive)
+        clxHiresBlock(x, p1, p2, p3, p4);
     if (hostDirectActive) {
         hostDirectHires(row, x, p1, p2, p3, p4);
     } else {
@@ -1037,6 +1040,8 @@ static void __attribute__((noinline)) dmaEndOfLine(void) {
     rotatedTailEndOfLine();
 
     audioLine(lineLast + 1);
+    if (clxActive)
+        clxLineEnd();
     if (hostDirectActive) {
         // The line's messages go out (or are replaced if its image row is
         // unchanged); a row without blocks gets its border colour.
@@ -1067,6 +1072,7 @@ static void __attribute__((noinline)) dmaEndOfLine(void) {
         internal.LOF = (chipset.bplcon0 & 0x4) ? !internal.LOF : 1;
         copperWaitPosition = 0;
         spriteFrameStart();
+        clxFrame();
 
         //Reset Copper.
         putChipReg16[COPJMP1](0);
@@ -1573,6 +1579,20 @@ static void spriteRenderLine(void) {
     // bytes in lores beam positions (OCS: HSTOP8 is fixed at 1).
     const int diw_start = chipset.diwstrt & 0xff;
     const int diw_stop = (chipset.diwstop & 0xff) | 0x100;
+    // Collisions see each armed sprite on its own (clipped like its pixels).
+    for (int n = 0; clxActive && n < 8; ++n) {
+        if (!((spriteArmed >> n) & 1u))
+            continue;
+        const uint16_t *r = spriteRegisters((unsigned)n);
+        const int hstart = ((r[0] & 0xff) << 1) | (r[1] & 1);
+        uint32_t mask = 0xffffu;
+        if (hstart < diw_start)
+            mask &= diw_start - hstart >= 16 ? 0u : 0xffffu >> (diw_start - hstart);
+        if (hstart + 16 > diw_stop)
+            mask &= hstart >= diw_stop ? 0u
+                  : (0xffffu << (hstart + 16 - diw_stop)) & 0xffffu;
+        clxSprite(n, 2 * (hstart - first) + shift, (uint16_t)((r[2] | r[3]) & mask));
+    }
     for (int pair = 3; pair >= 0; --pair) {
         const unsigned even = 2u * (unsigned)pair, odd = even + 1u;
         const uint16_t *re = spriteRegisters(even), *ro = spriteRegisters(odd);
@@ -1767,6 +1787,8 @@ static inline void loresPlane1Fetch(void){
     }
     
     spriteLineRow = host.rasterRow;
+    if (clxActive)
+        clxLoresBlock(host.rasterX, chipset.bpl1dat, chipset.bpl2dat, chipset.bpl3dat, chipset.bpl4dat, chipset.bpl5dat, chipset.bpl6dat);
     if (hostDirectActive) {
         hostDirectLoresFast(host.rasterRow, host.rasterX, chipset.bpl1dat, chipset.bpl2dat, chipset.bpl3dat, chipset.bpl4dat, chipset.bpl5dat, chipset.bpl6dat, chipset.bplcon0 & 0x800);
     } else {
@@ -1923,6 +1945,8 @@ static inline void hiresPlane1Fetch(void){
         raster_row--;
     }
 
+    if (clxActive)
+        clxHiresBlock(host.rasterX, chipset.bpl1dat, chipset.bpl2dat, chipset.bpl3dat, chipset.bpl4dat);
     if (hostDirectActive) {
         hostDirectHiresFast(raster_row, host.rasterX, chipset.bpl1dat, chipset.bpl2dat, chipset.bpl3dat, chipset.bpl4dat);
     } else {

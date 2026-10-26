@@ -23,7 +23,7 @@ $CC -O2 -g -std=gnu11 -include native/sdl_shim.h \
     -o "$OUT" native/main_native.c native/host_native.c native/memory_native.c \
     native/hdf_native.c native/kicksmash_native.c \
     slave/src/platform/Planar.c native/Presentation.c $SDL_OBJ \
-    $O/Audio.c $O/AudioMix.c $O/Blitter.c $O/Chipset.c $O/CIA.c $O/CPU.c \
+    common/amiga/Collision.c $O/Audio.c $O/AudioMix.c $O/Blitter.c $O/Chipset.c $O/CIA.c $O/CPU.c \
     $O/debug.c $O/DMA.c $O/Floppy.c $O/Expansion.c $O/Gayle.c $O/Picasso2.c \
     $O/KickSmash.c $O/m68kcpu.c $O/m68kdasm.c $O/m68kopac.c $O/m68kopdm.c \
     $O/m68kopnz.c $O/m68kops.c $SDL_LIBS -lm

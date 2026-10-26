@@ -22,6 +22,7 @@
 #include "Host.h"
 #include "debug.h"
 #include "Gayle.h"
+#include "Collision.h"
 
 // DMA pointers reach chip RAM only: Agnus keeps as many address bits as
 // its chip RAM range (2 MB: A1-A20) and ignores the rest of the high word.
@@ -262,7 +263,7 @@ uint16_t joy1dat(){
     return chipset.joy1dat;
 }
 uint16_t clxdat(){
-    return chipset.clxdat;
+    return clxRead();   // frank-amiga: Collision.c
 }
 uint16_t adkconr(){
     
@@ -535,7 +536,8 @@ void  dmacon(uint16_t value){
 }
 
 void clxcon(uint16_t value){
-    
+    chipset.clxcon = value;
+    clxWriteCon(value);
 }
 
 void intena(uint16_t value){

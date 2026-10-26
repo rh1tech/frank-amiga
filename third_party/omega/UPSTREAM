@@ -5,3 +5,4 @@ Local changes: chip RAM accesses in Audio.c, DMA.c, Blitter.c go through CHIPW()
 Local change: DMA.c dmaIdleUntil() early exits (busy blitter / executing Copper).
 Local change: Blitter.c copy blits use per-blit minterm masks and a prefix-XOR area fill (bit-identical).
 Local change: Floppy.c step clears /CHNG only with a disk inserted.
+Local change: collisions — Chipset.c CLXCON/CLXDAT go to common/amiga/Collision.c; DMA.c feeds it bitplane blocks, armed sprites and line ends while a program reads CLXDAT.
