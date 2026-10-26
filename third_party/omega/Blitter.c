@@ -136,6 +136,28 @@ uint16_t logicFunction(int minterm,uint16_t wordA, uint16_t wordB, uint16_t word
     return channelD;
 }
 
+// frank-amiga: the minterm as eight all-ones/all-zeros masks, computed once
+// per blit, and evaluated branch-free as a 3-level multiplexer (A selects the
+// high or low nibble, B a pair, C the bit) - same result as logicFunction().
+typedef struct { uint16_t m[8]; } MintermMasks;
+static inline MintermMasks mintermMasks(int minterm) {
+    MintermMasks k;
+    for (int i = 0; i < 8; ++i)
+        k.m[i] = (uint16_t)-(uint16_t)((minterm >> i) & 1);
+    return k;
+}
+static inline uint16_t mintermApply(const MintermMasks *k, uint16_t a,
+                                    uint16_t b, uint16_t c) {
+    const uint16_t nc = (uint16_t)~c;
+    const uint16_t b1 = (uint16_t)((c & k->m[7]) | (nc & k->m[6]));
+    const uint16_t b0 = (uint16_t)((c & k->m[5]) | (nc & k->m[4]));
+    const uint16_t a1 = (uint16_t)((b & b1) | ((uint16_t)~b & b0));
+    const uint16_t b1n = (uint16_t)((c & k->m[3]) | (nc & k->m[2]));
+    const uint16_t b0n = (uint16_t)((c & k->m[1]) | (nc & k->m[0]));
+    const uint16_t a0 = (uint16_t)((b & b1n) | ((uint16_t)~b & b0n));
+    return (uint16_t)((a & a1) | ((uint16_t)~a & a0));
+}
+
 void blitter_execute(Chipset_t* chipset){
     
     //Blitter DMA Enabled and blitter busy flag set (which means bltsize was written to and blitting should start).
@@ -429,6 +451,7 @@ void blitter_execute(Chipset_t* chipset){
             int shiftA = chipset->bltcon0 >> 12;
             int shiftB = chipset->bltcon1 >> 12;
             int minterm = chipset->bltcon0 & 255;
+            const MintermMasks mk = mintermMasks(minterm);
             int xIncrement = 1;
             int fillmode = (chipset->bltcon1 & 0x18) >> 3; // 1= Inclusive Fill, 2 = Exclusive Fill
             int fci = (chipset->bltcon1 >> 2) & 1;       // fill carry input
@@ -540,21 +563,20 @@ void blitter_execute(Chipset_t* chipset){
                     previousB = bdat;
                     
                     
-                    channelD = logicFunction(minterm, channelA, channelB, cdat);
+                    channelD = mintermApply(&mk, channelA, channelB, cdat);
 
                     // Area fill (IFE/EFE): carry propagates LSB→MSB, resets to fci each row
                     if (fillmode) {
-                        uint16_t filled = 0;
-                        for (int b = 0; b < 16; ++b) {
-                            int bit = (channelD >> b) & 1;
-                            if (fillmode == 1) {        // inclusive
-                                filled |= (uint16_t)((bit | carry) << b);
-                            } else {                     // exclusive
-                                filled |= (uint16_t)((bit ^ carry) << b);
-                            }
-                            carry ^= bit;
-                        }
-                        channelD = filled;
+                        // frank-amiga: the bit loop as a prefix XOR. The
+                        // carry into bit b is fci ^ (bits 0..b-1), so the
+                        // exclusive prefix of channelD gives all 16 at once.
+                        uint32_t p = channelD;
+                        p ^= p << 1; p ^= p << 2; p ^= p << 4; p ^= p << 8;
+                        uint32_t cv = (p << 1) & 0xFFFFu;
+                        if (carry) cv ^= 0xFFFFu;
+                        channelD = (uint16_t)(fillmode == 1 ? (channelD | cv)
+                                                            : (channelD ^ cv));
+                        carry ^= (int)((p >> 15) & 1u);
                     }
 
                     //Zero Flag

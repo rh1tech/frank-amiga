@@ -1123,6 +1123,12 @@ static inline void dmaEClock(int k) {
 // VHPOSR is only read by the CPU, between calls, and by the Copper's SKIP
 // (which uses the beam directly), so it is stored once on return: the
 // position of the last slot run, as if it were written at every slot.
+#ifdef DMA_SLOT_STATS
+uint32_t dma_stat_slow, dma_stat_batched, dma_stat_skipped;
+#define DSTAT(x, n) (x += (n))
+#else
+#define DSTAT(x, n) ((void)0)
+#endif
 void dma_run(int slots){
     int beamV = -1, beamH = 0;  // last slot run
     while (slots-- > 0) {
@@ -1176,6 +1182,7 @@ void dma_run(int slots){
                     }
                     if (end - 1 == bitplaneLine.lastCycle)
                         dmaFetchWindowComplete();
+                    DSTAT(dma_stat_batched, (uint32_t)k);
                     internal.hPos = end;
                     slots -= k - 1;
                     beamV = internal.vPos;
@@ -1191,6 +1198,7 @@ void dma_run(int slots){
                 next = dmaIdleUntil(next);
                 const int k = next - h;
                 if (k > 0) {
+                    DSTAT(dma_stat_skipped, (uint32_t)k);
                     internal.hPos = next;
                     slots -= k - 1;
                     beamV = internal.vPos;
@@ -1203,6 +1211,7 @@ void dma_run(int slots){
 #endif
 
         // SDL_AtomicSet(&cpuWait, 1); // single-threaded on RP2350
+        DSTAT(dma_stat_slow, 1u);
         slotTable[internal.hPos]();
 
         if (internal.hPos == bitplaneLine.lastCycle)

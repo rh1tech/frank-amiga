@@ -223,8 +223,16 @@ static void __not_in_flash_func(emulation_loop)(void) {
                    (unsigned long)(pump_words / 1000u), (unsigned long)pump_resyncs,
                    (unsigned long)hostAudioDrops, (unsigned long)chip_bank_swaps,
                    (unsigned long)m68k_get_reg(NULL, M68K_REG_PC));
-            last_frames = f;
             next_report = now + 2000000u;
+#ifdef DMA_SLOT_STATS
+            extern uint32_t dma_stat_slow, dma_stat_batched, dma_stat_skipped;
+            printf("slots/frame: slow %lu batched %lu skipped %lu\n",
+                   (unsigned long)(dma_stat_slow / (f - last_frames + 1)),
+                   (unsigned long)(dma_stat_batched / (f - last_frames + 1)),
+                   (unsigned long)(dma_stat_skipped / (f - last_frames + 1)));
+            dma_stat_slow = dma_stat_batched = dma_stat_skipped = 0;
+#endif
+            last_frames = f;
 #ifdef CHIP_BANK_PROFILE
             printf("banks:");
             for (uint32_t b = 0; b < CHIP_BANKS; b++) {
