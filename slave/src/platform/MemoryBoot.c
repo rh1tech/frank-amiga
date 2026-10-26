@@ -64,7 +64,7 @@ static void memory_map_pages(void) {
 }
 
 void memory_init(void) {
-    chip_ram  = psram_ptr(PSRAM_CHIPRAM_OFFSET);
+    chip_ram  = (uint8_t *)(BOARD_CHIPRAM_BASE + PSRAM_CHIPRAM_OFFSET);
 
     // ROM lives in flash; the user must place the Kickstart binary at
     // flash offset 0x200000 (i.e. absolute address ROM_FLASH_BASE).

@@ -12,6 +12,13 @@
 #define BOARD_PSRAM_CS_PIN       0
 #define BOARD_PSRAM_BASE         0x11000000u // CS1 XIP window (cached)
 #define BOARD_PSRAM_SIZE_BYTES   0x800000u   // 8 MB ESP-PSRAM64H
+// frank-amiga: emulated chip RAM base. Measured on State of the Art's
+// heaviest part: cached (0x11...) 34 fps, uncached alias (0x15...) 28 fps.
+// The M0 random-access benchmark favours uncached (86 vs 121 cycles), but
+// bitplane, blitter and copper DMA read sequentially and win from the cache.
+#ifndef BOARD_CHIPRAM_BASE
+#define BOARD_CHIPRAM_BASE       0x11000000u
+#endif
 
 // ---------------------------------------------------------------------------
 //  Amiga memory map inside the slave's PSRAM

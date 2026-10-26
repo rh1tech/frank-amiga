@@ -39,7 +39,7 @@
 #ifdef PICO_BUILD
 #include "psram.h"
 // Byte pointer to the start of chip RAM (PSRAM-backed, memory-mapped)
-#define CHIPRAM_BASE_PTR  ((uint8_t*)(PSRAM_BASE + PSRAM_CHIPRAM_OFFSET))
+#define CHIPRAM_BASE_PTR  ((uint8_t*)(BOARD_CHIPRAM_BASE + PSRAM_CHIPRAM_OFFSET))
 #else
 // low16Meg is declared by the desktop Memory.c
 extern unsigned char low16Meg[16777216];
