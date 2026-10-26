@@ -8,3 +8,4 @@ ref/
 *.rom
 logs/
 .DS_Store
+assets/

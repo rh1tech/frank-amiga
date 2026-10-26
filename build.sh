@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -euo pipefail
 cd "$(dirname "$0")"
-: "${PICO_SDK_PATH:=$HOME/pico/pico-sdk}"
+# The shell may export a stale PICO_SDK_PATH; use it only if it exists.
+[ -d "${PICO_SDK_PATH:-}" ] || PICO_SDK_PATH="$HOME/pico/pico-sdk"
 export PICO_SDK_PATH
 what="${1:-all}"
 for half in master slave; do
