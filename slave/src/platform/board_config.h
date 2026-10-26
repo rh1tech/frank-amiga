@@ -49,3 +49,8 @@
 // tools/flash_rom.sh). Later the master uploads it over the link instead.
 #define BOARD_ROM_FLASH_BASE       0x10200000u
 #define BOARD_ROM_SIZE             0x080000u   // 512 KB (256 KB ROMs mirrored)
+// Optional extended ROM (AROS), right after it; used when it starts 0x11.
+#define BOARD_EXT_ROM_FLASH_BASE   0x10280000u
+// DF0 test disk (raw ADF, 901120 bytes) in flash until the master uploads
+// disks over the link; used when present (not erased flash).
+#define BOARD_ADF_FLASH_BASE       0x10300000u

@@ -50,6 +50,7 @@ uint32_t vram_from = 0xFFFFFFFFu;
 
 // ── ROM (read-only: flash via XIP, or the SD card's copy in PSRAM) ────────
 const uint8_t *rom_base;
+extern const uint8_t *ext_rom_base;
 uint32_t       rom_size;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -204,6 +205,10 @@ unsigned int chipReadLong(unsigned int address) {
         if (!rom_base) return 0;
         return ram_read_long(rom_ptr(address));
     }
+    // frank-amiga: the extended ROM (MemoryBoot.c), before the custom
+    // registers' range swallows it.
+    if (address >= 0xE00000u && address < 0xE80000u && ext_rom_base)
+        return ram_read_long(&ext_rom_base[address - 0xE00000u]);
     // Custom chipset registers (32-bit = two 16-bit reads)
     if (address > 0xDFEFFFu) {
         uint32_t off = (address - 0xDFF000u) >> 1;

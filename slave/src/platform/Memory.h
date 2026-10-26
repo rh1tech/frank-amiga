@@ -52,6 +52,8 @@ void memory_init(void);
 // Select a 256 KB or 512 KB Kickstart image already resident in memory.
 // Returns 1 when accepted; a 256 KB image is mirrored by address decoding.
 int memory_set_rom(const uint8_t *data, uint32_t size);
+// frank-amiga: map a 512 KB extended ROM at 0xE00000 (NULL: none).
+void memory_set_ext_rom(const uint8_t *data);
 // Wipe chip RAM from address 4 upward (called on 68k RESET)
 void memory_clear_chipram(void);
 

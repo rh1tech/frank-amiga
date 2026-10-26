@@ -135,7 +135,12 @@ static void pace(void) {
             pace_locked = true;
             pace_base = frames - refreshes;
         }
-        if ((int32_t)(frames - (refreshes + pace_base)) <= 1) return;
+        const int32_t ahead = (int32_t)(frames - (refreshes + pace_base));
+        /* Behind (a heavy stretch): forget the deficit rather than sprint
+         * to make it up, which would only produce audio faster than the
+         * DAC plays it. */
+        if (ahead < -2) pace_base = frames - refreshes;
+        if (ahead <= 1) return;
         tight_loop_contents();
     }
 }
@@ -224,6 +229,11 @@ int main(void) {
     memory_init();
     if (!memory_set_rom((const uint8_t *)BOARD_ROM_FLASH_BASE, BOARD_ROM_SIZE))
         printf("ROM: none at flash 0x%08x\n", (unsigned)BOARD_ROM_FLASH_BASE);
+    const uint8_t *ext = (const uint8_t *)BOARD_EXT_ROM_FLASH_BASE;
+    if (ext[0] == 0x11 && ext[1] == 0x14) {
+        memory_set_ext_rom(ext);
+        printf("ROM: extended ROM at flash 0x%08x\n", (unsigned)BOARD_EXT_ROM_FLASH_BASE);
+    }
 
     multicore_launch_core1(pump_core1_entry);
     hostInit();
@@ -231,9 +241,16 @@ int main(void) {
     ChipsetInit();
     for (int drive = 0; drive < 4; ++drive)
         floppyInit(drive);
-    /* An empty DF0: every track reads as a sync word and nothing else, so
-     * trackdisk times out and Kickstart shows its insert-disk screen. */
-    if (df[0].mfmData) {
+    /* DF0: an ADF in flash if there is one. Otherwise an empty drive: every
+     * track reads as a sync word and nothing else, so trackdisk times out
+     * and Kickstart shows its insert-disk screen. */
+    const uint8_t *adf = (const uint8_t *)BOARD_ADF_FLASH_BASE;
+    if (*(const uint32_t *)adf != 0xFFFFFFFFu &&
+        floppyMountADF(0, adf, FLOPPY_ADF_SIZE)) {
+        df[0].hasDisk = 1;
+        df[0].pra &= 0xFB;
+        printf("DF0: ADF at flash 0x%08x inserted\n", (unsigned)BOARD_ADF_FLASH_BASE);
+    } else if (df[0].mfmData) {
         memset(df[0].mfmData, 0, BOARD_MAP_FLOPPY_SIZE);
         df[0].mfmData[0] = 0x44;
         df[0].mfmData[1] = 0x89;

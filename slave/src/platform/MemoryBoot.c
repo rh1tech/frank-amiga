@@ -29,6 +29,16 @@ extern uint32_t vram_from;
 static uint32_t vram_from;              // no RTG card: unused
 #endif
 
+// frank-amiga: an extended ROM at 0xE00000-0xE7FFFF (AROS splits its
+// Kickstart in two 512 KB halves), or NULL.
+const uint8_t *ext_rom_base;
+static void memory_map_pages(void);
+
+void memory_set_ext_rom(const uint8_t *data) {
+    ext_rom_base = data;
+    memory_map_pages();
+}
+
 #define PAGE_SHIFT 16
 #define PAGE_COUNT (0x1000000u >> PAGE_SHIFT)
 
@@ -42,6 +52,8 @@ static void memory_map_pages(void) {
             mem = chip_ram + a;
         } else if (a - 0x200000u < fast_ram_size) {
             mem = chip_ram + a;     // Fast RAM follows chip RAM in PSRAM
+        } else if (a >= 0xE00000u && a < 0xE80000u && ext_rom_base) {
+            mem = ext_rom_base + (a - 0xE00000u);
         } else if (a >= 0xF80000u && rom_base) {
             uint32_t offset = a - 0xF80000u;
             if (rom_size <= 0x40000u) offset &= 0x3FFFFu;
@@ -193,6 +205,8 @@ static int in_regs(unsigned int address) {
 #endif
 
 unsigned int memory_expansion_read(unsigned int address) {
+    if (ext_rom_base && address >= 0xE00000u && address < 0xE80000u)
+        return ext_rom_base[address - 0xE00000u];
     if (in_regs(address))
         return p2RegRead(address - regs_base);
     const int value = address >= EXPANSION_BASE && address < EXPANSION_END
@@ -201,6 +215,9 @@ unsigned int memory_expansion_read(unsigned int address) {
 }
 
 unsigned int memory_expansion_read_word(unsigned int address) {
+    if (ext_rom_base && address >= 0xE00000u && address < 0xE80000u)
+        return (unsigned int)ext_rom_base[address - 0xE00000u] << 8 |
+               ext_rom_base[address + 1u - 0xE00000u];
     if (in_regs(address))
         return p2RegRead(address - regs_base) << 8 |
                p2RegRead(address + 1 - regs_base);
