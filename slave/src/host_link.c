@@ -234,8 +234,10 @@ static uint32_t row_end_generation;
 // again: core 1 copies them from the buffer's last frame. Per image row,
 // the hash of its messages and the frame it last changed in; in
 // SCRATCH_Y (core 0's stack bank: its stack peaks at ~1 KB of 4 KB).
-static uint32_t __scratch_y("row_hash") row_hash[DIRECT_MAX_ROWS];
-static uint32_t __scratch_y("row_hash") row_since[DIRECT_MAX_ROWS];
+// frank-amiga: in main RAM, not SCRATCH_Y: the slave gives core 0 the whole
+// 4 KB bank for its stack (upstream shared it, with a 2 KB stack).
+static uint32_t row_hash[DIRECT_MAX_ROWS];
+static uint32_t row_since[DIRECT_MAX_ROWS];
 static uint32_t row_layout[2];
 static uint32_t direct_frame_no;
 // The previous row's messages went to core 1 (it was drawn afresh).

@@ -9,8 +9,9 @@
  * row can only tear, never desynchronise the ring.
  *
  * Every source row is shown on two output lines (576 -> 288 rows,
- * 480 -> 240). Rows are RGB565, two pixels per 32-bit word, as wide as the
- * active line; the callback fills the whole width including any border.
+ * 480 -> 240). Rows are RGB888, one pixel per 32-bit word (0x00RRGGBB), as
+ * wide as the active line; the callback fills the whole width including any
+ * border.
  *
  * Board: FRANK Core 2 master, GPIO12..19 with each pair's N on the lower
  * pin (CLK 12/13, D0 blue 14/15, D1 green 16/17, D2 red 18/19).
@@ -48,8 +49,9 @@ typedef struct {
 } mode_t;
 
 static const mode_t modes[] = {
-    [VIDEO_720x576p50] = { "720x576p50", 720, 576, 12, 64, 68, 5, 5, 39, 270000, 17, false },
-    [VIDEO_720x480p60] = { "720x480p60", 720, 480, 16, 62, 60, 9, 6, 30, 270000, 3, false },
+    /* VGA timing; the 50 Hz variant stretches the vertical back porch so
+     * PAL frames land one per refresh (25.2 MHz / (800 x 630) = 50.0 Hz). */
+    [VIDEO_640x480p50] = { "640x480p50", 640, 480, 16, 96, 48, 10, 2, 138, 252000, 0, true },
     [VIDEO_640x480p60] = { "640x480p60", 640, 480, 16, 96, 48, 10, 2, 33, 252000, 1, true },
 };
 
@@ -67,10 +69,10 @@ static const mode_t modes[] = {
 #define HSTX_CMD_TMDS        (0x2u << 12)
 #define HSTX_CMD_NOP         (0xfu << 12)
 
-#define MAX_WIDTH 720u
+#define MAX_WIDTH 640u
 #define ROW_BUFFERS 2u
-/* [0] = TMDS | width, then width/2 pixel words, then a NOP. */
-#define ROW_WORDS (1u + MAX_WIDTH / 2u + 1u)
+/* [0] = TMDS | width, then width pixel words, then a NOP. */
+#define ROW_WORDS (1u + MAX_WIDTH + 1u)
 
 static const mode_t *m;
 static uint32_t v_total, h_blank, rows;
@@ -187,7 +189,7 @@ static void __not_in_flash_func(next_active)(uint p) {
     if (line < m->height) {
         const uint row = line >> 1;
         list = row_buf[row & 1u];
-        count = 2u + m->width / 2u;
+        count = 2u + m->width;
     } else if (line_is_vsync(line)) {
         list = vsync_active;
         count = 3;
@@ -216,7 +218,7 @@ static void __not_in_flash_func(expand_isr)(void) {
         for (uint b = 0; b < ROW_BUFFERS; ++b) {
             const int row = expand_row[b];
             if (row < 0) continue;
-            row_fn((uint32_t)row, (uint16_t *)&row_buf[b][1], m->width);
+            row_fn((uint32_t)row, &row_buf[b][1], m->width);
             expand_row[b] = -1;
             again = true;
         }
@@ -231,15 +233,15 @@ static void hstx_configure(void) {
                         5u << HSTX_CTRL_CSR_N_SHIFTS_LSB |
                         2u << HSTX_CTRL_CSR_SHIFT_LSB |
                         HSTX_CTRL_CSR_EN_BITS;
-    /* RGB565, two pixels per word: red 15:11 -> lane 2, green 10:5 ->
-     * lane 1, blue 4:0 -> lane 0, each left-aligned into bits 7:0. */
+    /* RGB888, one pixel per word: red 23:16 -> lane 2, green 15:8 ->
+     * lane 1, blue 7:0 -> lane 0. */
     hstx_ctrl_hw->expand_tmds =
-        4u << HSTX_CTRL_EXPAND_TMDS_L2_NBITS_LSB | 8u << HSTX_CTRL_EXPAND_TMDS_L2_ROT_LSB |
-        5u << HSTX_CTRL_EXPAND_TMDS_L1_NBITS_LSB | 3u << HSTX_CTRL_EXPAND_TMDS_L1_ROT_LSB |
-        4u << HSTX_CTRL_EXPAND_TMDS_L0_NBITS_LSB | 29u << HSTX_CTRL_EXPAND_TMDS_L0_ROT_LSB;
+        7u << HSTX_CTRL_EXPAND_TMDS_L2_NBITS_LSB | 16u << HSTX_CTRL_EXPAND_TMDS_L2_ROT_LSB |
+        7u << HSTX_CTRL_EXPAND_TMDS_L1_NBITS_LSB | 8u << HSTX_CTRL_EXPAND_TMDS_L1_ROT_LSB |
+        7u << HSTX_CTRL_EXPAND_TMDS_L0_NBITS_LSB | 0u << HSTX_CTRL_EXPAND_TMDS_L0_ROT_LSB;
     hstx_ctrl_hw->expand_shift =
-        2u << HSTX_CTRL_EXPAND_SHIFT_ENC_N_SHIFTS_LSB |
-        16u << HSTX_CTRL_EXPAND_SHIFT_ENC_SHIFT_LSB |
+        1u << HSTX_CTRL_EXPAND_SHIFT_ENC_N_SHIFTS_LSB |
+        0u << HSTX_CTRL_EXPAND_SHIFT_ENC_SHIFT_LSB |
         1u << HSTX_CTRL_EXPAND_SHIFT_RAW_N_SHIFTS_LSB |
         0u << HSTX_CTRL_EXPAND_SHIFT_RAW_SHIFT_LSB;
     /* HSTX output bit n is GPIO 12+n. Each pair: N on the even bit
@@ -277,7 +279,7 @@ bool video_init(video_mode_t mode, video_row_fn rfn, video_frame_fn ffn) {
     vsync_active[2] = HSTX_CMD_NOP;
     for (uint b = 0; b < ROW_BUFFERS; ++b) {
         row_buf[b][0] = HSTX_CMD_TMDS | m->width;
-        row_buf[b][1u + m->width / 2u] = HSTX_CMD_NOP;
+        row_buf[b][1u + m->width] = HSTX_CMD_NOP;
     }
     for (uint key = 0; key < 8u; ++key)
         build_hblank(key);
@@ -305,7 +307,7 @@ void video_start(void) {
         }
     }
     /* Rows 0 and 1 before the first lines go out. */
-    row_fn(0, (uint16_t *)&row_buf[0][1], m->width);
+    row_fn(0, &row_buf[0][1], m->width);
     for (uint p = 0; p < 2u; ++p) {
         next_hblank(p);
         next_active(p);
@@ -329,17 +331,15 @@ uint32_t video_rows(void) { return rows; }
 const char *video_mode_name(void) { return m ? m->name : "none"; }
 bool video_full_range(void) { return m ? m->full_range : true; }
 
-/* Amiga 0x0RGB -> RGB565 in the mode's quantisation range: full range
- * replicates each nibble (0xF -> 0xFF); limited range maps 0..15 onto
- * 16..235 first, as CEA modes require. */
-uint16_t video_rgb12_to_565(uint16_t c) {
-    uint32_t r = (c >> 8) & 15u, g = (c >> 4) & 15u, b = c & 15u;
-    if (m && !m->full_range) {
-        r = 16u + r * 219u / 15u; g = 16u + g * 219u / 15u; b = 16u + b * 219u / 15u;
-    } else {
-        r *= 17u; g *= 17u; b *= 17u;
-    }
-    return (uint16_t)(((r * 31u + 127u) / 255u) << 11 |
-                      ((g * 63u + 127u) / 255u) << 5 |
-                      ((b * 31u + 127u) / 255u));
+/* One 4-bit Amiga colour component -> 8 bits in the mode's range: full
+ * range replicates the nibble (0xF -> 0xFF); limited range maps 0..15 onto
+ * 16..235, as CEA modes require. */
+uint8_t video_nibble_to_8(uint32_t n) {
+    n &= 15u;
+    return (uint8_t)((m && !m->full_range) ? 16u + (n * 219u + 7u) / 15u : n * 17u);
+}
+
+uint32_t video_rgb12_to_888(uint16_t c) {
+    return (uint32_t)video_nibble_to_8(c >> 8) << 16 |
+           (uint32_t)video_nibble_to_8(c >> 4) << 8 | video_nibble_to_8(c);
 }

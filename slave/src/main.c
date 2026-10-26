@@ -5,8 +5,8 @@
  *
  * Core 0 runs the emulator: 68000, Agnus (DMA slots, Copper, blitter),
  * CIAs, Paula's timing, disk DMA. Every display and audio event leaves
- * through the message ring (host_link.c). Core 1 consumes the ring: in M2
- * it only measures the stream; in M3 it becomes the link pump.
+ * through the message ring (host_link.c). Core 1 is the link pump: it
+ * streams the ring to the master and brings back input (link_pump.c).
  *
  * Console on UART1 (J4).
  */
@@ -27,6 +27,7 @@
 #include "Host.h"
 #include "HostRing.h"
 #include "host_link.h"
+#include "link_pump.h"
 #include "../omega/Chipset.h"
 #include "../omega/CIA.h"
 #include "../omega/CPU.h"
@@ -50,7 +51,9 @@
 /* ── Hard faults: recorded in PSRAM (uncached) so they survive a reset ── */
 #define FAULT_MAGIC 0xfa017badu
 enum { FAULT_MAGIC_W, FAULT_PC, FAULT_LR, FAULT_CFSR, FAULT_HFSR,
-       FAULT_MMFAR, FAULT_BFAR, FAULT_SP, FAULT_PSR, FAULT_WORDS };
+       FAULT_MMFAR, FAULT_BFAR, FAULT_SP, FAULT_PSR, FAULT_R0, FAULT_R1,
+       FAULT_R2, FAULT_R3, FAULT_R12, FAULT_CORE, FAULT_STACK,
+       FAULT_STACK_WORDS = 24, FAULT_WORDS = FAULT_STACK + FAULT_STACK_WORDS };
 static volatile uint32_t *fault_record(void) {
     return (volatile uint32_t *)(0x15000000u + BOARD_MAP_BOOT_STATE_OFFSET + 0x10u);
 }
@@ -64,6 +67,13 @@ static void report_previous_fault(void) {
            (unsigned long)f[FAULT_CFSR], (unsigned long)f[FAULT_HFSR],
            (unsigned long)f[FAULT_MMFAR], (unsigned long)f[FAULT_BFAR],
            (unsigned long)f[FAULT_SP], (unsigned long)f[FAULT_PSR]);
+    printf("  core %lu r0=%08lx r1=%08lx r2=%08lx r3=%08lx r12=%08lx\n  stack:",
+           (unsigned long)f[FAULT_CORE], (unsigned long)f[FAULT_R0],
+           (unsigned long)f[FAULT_R1], (unsigned long)f[FAULT_R2],
+           (unsigned long)f[FAULT_R3], (unsigned long)f[FAULT_R12]);
+    for (int i = 0; i < FAULT_STACK_WORDS; i++)
+        printf(" %08lx", (unsigned long)f[FAULT_STACK + i]);
+    printf("\n");
     f[FAULT_MAGIC_W] = 0;
 }
 
@@ -77,6 +87,11 @@ void __attribute__((noreturn, used)) hardfault_report(uint32_t *frame) {
     f[FAULT_BFAR] = scb_hw->bfar;
     f[FAULT_SP] = (uint32_t)(uintptr_t)frame;
     f[FAULT_PSR] = frame[7];
+    f[FAULT_R0] = frame[0]; f[FAULT_R1] = frame[1]; f[FAULT_R2] = frame[2];
+    f[FAULT_R3] = frame[3]; f[FAULT_R12] = frame[4];
+    f[FAULT_CORE] = get_core_num();
+    for (int i = 0; i < FAULT_STACK_WORDS; i++)
+        f[FAULT_STACK + i] = frame[8 + i];
     f[FAULT_MAGIC_W] = FAULT_MAGIC;
     printf("HARDFAULT: pc=%08lx lr=%08lx cfsr=%08lx hfsr=%08lx\n",
            (unsigned long)frame[6], (unsigned long)frame[5],
@@ -93,58 +108,73 @@ void __attribute__((naked)) isr_hardfault(void) {
         "b hardfault_report\n");
 }
 
-/* ── Pacing: M2 runs unthrottled ── */
-void host_frame_paced(void) {}
+/* ── Input from the master, applied once per frame (upstream
+ * src/usb_input.c usb_input_frame()) ── */
+#define KEYQ 32u
+static uint8_t key_q[KEYQ];
+static uint32_t key_head, key_tail;
+static int mouse_dx, mouse_dy;
+static uint8_t mouse_buttons;
 
-/* ── Core 1 (M2): drain the ring, measure the stream per frame ── */
-static uint32_t msg_words(const uint32_t *ring, uint32_t ring_words,
-                          uint32_t slot, uint32_t avail) {
-    const uint32_t h = ring[slot];
-    const uint32_t type = h & 15u;
-    switch (type) {
-    case MSG_BEGIN:    return 4;
-    case MSG_HIRES:    return 1 + 2 * (((h >> MSG_RUN_SHIFT) & (MSG_RUN_MAX - 1)) + 1);
-    case MSG_LORES:    return 1 + 3 * (((h >> MSG_RUN_SHIFT) & (MSG_RUN_MAX - 1)) + 1);
-    case MSG_PALETTE:  return 17;
-    case MSG_END:      return 2;
-    case MSG_SPRITE:   return (h >> 28) & 1u ? 3 : 2;   /* attached: extra bit 5 */
-    case MSG_ROW_END:  return 1;
-    case MSG_COLOUR:   return 2;
-    case MSG_ROW_SAME: return 1;
-    case MSG_AUDIO:    return 1 + (h >> 23);
-    default:           return 0;                        /* corrupt */
+static int clamp_delta(int d) { return d > 127 ? 127 : d < -127 ? -127 : d; }
+
+/* Pacing: at most one emulated frame ahead of the master's display, so
+ * emulation runs at exactly the refresh rate and Paula's 960 samples per
+ * frame match the DAC's 48 kHz. If the master stops refreshing (not up
+ * yet, being reflashed), run free rather than stall. */
+static uint32_t pace_base;
+static bool pace_locked;
+
+static void pace(void) {
+    const uint32_t frames = host_frames_emulated;
+    for (;;) {
+        const uint64_t now = time_us_64();
+        if (now - pump_refresh_us > 100000u) { pace_locked = false; return; }
+        const uint32_t refreshes = pump_refreshes;
+        if (!pace_locked) {             /* (re)lock: count from here */
+            pace_locked = true;
+            pace_base = frames - refreshes;
+        }
+        if ((int32_t)(frames - (refreshes + pace_base)) <= 1) return;
+        tight_loop_contents();
     }
-    (void)ring_words; (void)avail;
 }
 
-static volatile uint32_t c1_frames, c1_words_last, c1_audio_words_last, c1_bad;
-
-static void core1_stats(void) {
-    const uint32_t *ring = host_ring_base();
-    const uint32_t ring_words = host_ring_words();
-    uint32_t words = 0, audio_words = 0;
-    for (;;) {
-        uint32_t slot;
-        uint32_t avail = host_ring_pending(&slot);
-        if (!avail) { __wfe(); continue; }
-        while (avail) {
-            const uint32_t n = msg_words(ring, ring_words, slot, avail);
-            if (!n || n > avail) { c1_bad++; n ? (void)0 : (void)0; }
-            const uint32_t take = (!n || n > avail) ? avail : n;
-            const uint32_t type = ring[slot] & 15u;
-            if (type == MSG_AUDIO) audio_words += take;
-            words += take;
-            if (type == MSG_END) {
-                c1_words_last = words;
-                c1_audio_words_last = audio_words;
-                words = audio_words = 0;
-                c1_frames++;
-            }
-            host_ring_consume(take);
-            avail -= take;
-            slot += take;
-            if (slot >= ring_words) slot -= ring_words;
+void host_frame_paced(void) {
+    pace();
+    link_input_ev_t ev;
+    while (pump_input_pop(&ev)) {
+        switch (ev.type) {
+        case LINK_EV_KEY:
+            if (key_head - key_tail < KEYQ)
+                key_q[key_head++ % KEYQ] = (uint8_t)((ev.a & 0x7F) | (ev.b ? 0x80 : 0));
+            break;
+        case LINK_EV_MOUSE:
+            mouse_dx += (int8_t)ev.a;
+            mouse_dy += (int8_t)ev.b;
+            mouse_buttons = ev.c;
+            break;
+        case LINK_EV_RESET:
+            hostResetRequested = 1;
+            break;
+        default:
+            break;
         }
+    }
+    const int dx = clamp_delta(mouse_dx), dy = clamp_delta(mouse_dy);
+    mouse_dx -= dx;
+    mouse_dy -= dy;
+    /* JOY0DAT: vertical counter in the high byte, horizontal in the low. */
+    const uint8_t h = (uint8_t)((chipset.joy0dat & 0xFF) + dx);
+    const uint8_t v = (uint8_t)((chipset.joy0dat >> 8) + dy);
+    chipset.joy0dat = (uint16_t)(v << 8 | h);
+    if (mouse_buttons & 1) CIAA.pra &= (uint8_t)~0x40; else CIAA.pra |= 0x40;
+    if (mouse_buttons & 2) chipset.potinp &= (uint16_t)~0x0400; else chipset.potinp |= 0x0400;
+    if (mouse_buttons & 4) chipset.potinp &= (uint16_t)~0x0100; else chipset.potinp |= 0x0100;
+    /* One key per frame: the keyboard's serial handshake cannot take more. */
+    if (key_tail != key_head) {
+        const uint8_t e = key_q[key_tail++ % KEYQ];
+        hostAmigaKey(e & 0x7F, e & 0x80);
     }
 }
 
@@ -167,11 +197,13 @@ static void __not_in_flash_func(emulation_loop)(void) {
         const uint64_t now = time_us_64();
         if (now >= next_report) {
             const uint32_t f = host_frames_emulated;
-            printf("emu: %.1f frames/s, stream %lu words/frame (audio %lu), "
-                   "ring bad %lu, pc %06lx\n",
+            printf("emu: %.1f frames/s, link %lu req %lu chunks %lu kwords "
+                   "%lu resyncs, audio drops %lu, pc %06lx\n",
                    (double)(f - last_frames) * 1e6 / (double)(now - next_report + 2000000u),
-                   (unsigned long)c1_words_last, (unsigned long)c1_audio_words_last,
-                   (unsigned long)c1_bad, (unsigned long)m68k_get_reg(NULL, M68K_REG_PC));
+                   (unsigned long)pump_requests, (unsigned long)pump_chunks,
+                   (unsigned long)(pump_words / 1000u), (unsigned long)pump_resyncs,
+                   (unsigned long)hostAudioDrops,
+                   (unsigned long)m68k_get_reg(NULL, M68K_REG_PC));
             last_frames = f;
             next_report = now + 2000000u;
         }
@@ -193,7 +225,7 @@ int main(void) {
     if (!memory_set_rom((const uint8_t *)BOARD_ROM_FLASH_BASE, BOARD_ROM_SIZE))
         printf("ROM: none at flash 0x%08x\n", (unsigned)BOARD_ROM_FLASH_BASE);
 
-    multicore_launch_core1(core1_stats);
+    multicore_launch_core1(pump_core1_entry);
     hostInit();
     cpu_init();
     ChipsetInit();

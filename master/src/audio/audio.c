@@ -159,8 +159,11 @@ static void __not_in_flash_func(audio_stop)(void)
     idle_buffers = 0;
 }
 
+volatile uint32_t audio_frames_played;
+
 static void __not_in_flash_func(audio_dma_irq)(void)
 {
+    audio_frames_played += DMA_FRAMES;
     bool silent = false;
 
     if (dma_hw->ints0 & (1u << AUDIO_DMA_CH_A)) {

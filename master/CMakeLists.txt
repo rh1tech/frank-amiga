@@ -26,10 +26,19 @@ add_executable(frank-amiga-master
     src/audio/audio.c
     src/usb/hid_app.c
     src/usb/xinput_host.c
+    src/stream.c
+    src/input.c
+    src/denise/denise_c1.c
+    src/denise/denise_frames.c
+    src/denise/denise_audio.c
+    ${REPO_ROOT}/third_party/omega/AudioMix.c
     ${FRANK_PLATFORM_SOURCES}
 )
-target_include_directories(frank-amiga-master PRIVATE src src/usb ${FRANK_PLATFORM_DIR})
-target_compile_definitions(frank-amiga-master PRIVATE ${FRANK_DEFINITIONS})
+target_include_directories(frank-amiga-master PRIVATE src src/usb
+    ${REPO_ROOT}/common/amiga ${REPO_ROOT}/third_party/omega ${FRANK_PLATFORM_DIR})
+target_compile_definitions(frank-amiga-master PRIVATE ${FRANK_DEFINITIONS}
+    PICO_BUILD=1 OMEGA_VIDEO_STANDARD=1 OMEGA_ENABLE_HDMI=1 OMEGA_RTG=0
+    RING_WORDS=16384u)
 target_compile_options(frank-amiga-master PRIVATE ${FRANK_COPTS})
 target_link_libraries(frank-amiga-master
     pico_stdlib pico_multicore hardware_clocks hardware_dma hardware_pio

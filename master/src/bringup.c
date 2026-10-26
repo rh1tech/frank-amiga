@@ -21,18 +21,20 @@
 #include "audio/audio.h"
 #include "ff.h"
 #include "usb/usbhid.h"
+#include "hardware/structs/qmi.h"
+#include "hardware/sync.h"
 
 #include <math.h>
 
-static uint16_t ramp565[16], bg565, white565;
+static uint32_t ramp565[16], bg565, white565;
 
 static const uint16_t bars12[8] = {
     0xFFF, 0xFF0, 0x0FF, 0x0F0, 0xF0F, 0xF00, 0x00F, 0x000,
 };
-static uint16_t bars565[8];
+static uint32_t bars565[8];
 static volatile uint32_t square_row;
 
-static void __not_in_flash_func(pattern_row)(uint32_t row, uint16_t *px, uint32_t w) {
+static void __not_in_flash_func(pattern_row)(uint32_t row, uint32_t *px, uint32_t w) {
     const uint32_t rows = video_rows();
     if (row == 0 || row == rows - 1u) {
         for (uint32_t x = 0; x < w; x++) px[x] = white565;
@@ -63,9 +65,8 @@ static void core1_video(void) {
 }
 
 static video_mode_t parse_mode(const char *s) {
-    if (!strcmp(s, "480")) return VIDEO_720x480p60;
-    if (!strcmp(s, "640")) return VIDEO_640x480p60;
-    return VIDEO_720x576p50;
+    if (!strcmp(s, "60")) return VIDEO_640x480p60;
+    return VIDEO_640x480p50;
 }
 
 static bool video_running;
@@ -82,11 +83,11 @@ static void start_video(video_mode_t mode) {
         printf("video: init failed\n");
         return;
     }
-    for (int i = 0; i < 8; i++) bars565[i] = video_rgb12_to_565(bars12[i]);
+    for (int i = 0; i < 8; i++) bars565[i] = video_rgb12_to_888(bars12[i]);
     for (int i = 0; i < 16; i++)
-        ramp565[i] = video_rgb12_to_565((uint16_t)(i << 8 | i << 4 | i));
-    bg565 = video_rgb12_to_565(0x125);
-    white565 = video_rgb12_to_565(0xFFF);
+        ramp565[i] = video_rgb12_to_888((uint16_t)(i << 8 | i << 4 | i));
+    bg565 = video_rgb12_to_888(0x125);
+    white565 = video_rgb12_to_888(0xFFF);
     multicore_launch_core1(core1_video);
     video_running = true;
     sleep_ms(100);
@@ -103,7 +104,7 @@ void bringup_cmd_video(int argc, char **argv) {
                (unsigned long)(video_frames - f0), (unsigned long)video_late_rows);
         return;
     }
-    start_video(parse_mode(argc > 1 ? argv[1] : "576"));
+    start_video(parse_mode(argc > 1 ? argv[1] : "50"));
 }
 
 void bringup_cmd_reboot(int argc, char **argv) {
@@ -188,6 +189,60 @@ void bringup_cmd_sdread(int argc, char **argv) {
     f_close(&f);
     printf("sd: %lu bytes in %lu ms, %.2f MB/s (sum %lu)\n", (unsigned long)total,
            (unsigned long)(dt / 1000u), (double)total / (double)dt, (unsigned long)sum);
+}
+
+/* ── Flash read integrity: re-read 1 MB through the uncached XIP alias and
+ * compare checksums, for each RXDELAY. Runs from RAM, interrupts off. ── */
+static uint32_t __no_inline_not_in_flash_func(flash_sum)(uint32_t words) {
+    const volatile uint32_t *p = (const volatile uint32_t *)0x14000000u;
+    uint32_t a = 0, b = 0;
+    for (uint32_t i = 0; i < words; i++) { a += p[i]; b += a; }
+    return a ^ (b << 1);
+}
+
+static void __no_inline_not_in_flash_func(flash_set_rxdelay)(uint32_t rx, uint32_t div) {
+    uint32_t t = qmi_hw->m[0].timing;
+    t &= ~(QMI_M0_TIMING_CLKDIV_BITS | QMI_M0_TIMING_RXDELAY_BITS);
+    t |= (div << QMI_M0_TIMING_CLKDIV_LSB) | ((rx << QMI_M0_TIMING_RXDELAY_LSB) & QMI_M0_TIMING_RXDELAY_BITS);
+    qmi_hw->m[0].timing = t;
+    __asm__ volatile("dmb" ::: "memory");
+}
+
+static uint32_t __no_inline_not_in_flash_func(flash_trial)(uint32_t rx, uint32_t div,
+                                                           uint32_t passes, uint32_t ref) {
+    const uint32_t saved = qmi_hw->m[0].timing;
+    const uint32_t irq = save_and_disable_interrupts();
+    flash_set_rxdelay(rx, div);
+    uint32_t bad = 0;
+    for (uint32_t i = 0; i < passes; i++)
+        if (flash_sum(256u * 1024u) != ref) bad++;
+    qmi_hw->m[0].timing = saved;
+    __asm__ volatile("dmb" ::: "memory");
+    restore_interrupts(irq);
+    return bad;
+}
+
+/* flashtest [div] [passes]: reference at a slow, safe setting, then every
+ * RXDELAY at the given divider. */
+void bringup_cmd_flashtest(int argc, char **argv) {
+    const uint32_t div = argc > 1 ? (uint32_t)atoi(argv[1]) : 8u;
+    const uint32_t passes = argc > 2 ? (uint32_t)atoi(argv[2]) : 20u;
+    const uint32_t cur = qmi_hw->m[0].timing;
+    printf("flash: current timing %08lx (div %lu, rxdelay %lu)\n", (unsigned long)cur,
+           (unsigned long)((cur & QMI_M0_TIMING_CLKDIV_BITS) >> QMI_M0_TIMING_CLKDIV_LSB),
+           (unsigned long)((cur & QMI_M0_TIMING_RXDELAY_BITS) >> QMI_M0_TIMING_RXDELAY_LSB));
+    /* Reference: divider 16, a generous sample delay. */
+    const uint32_t irq = save_and_disable_interrupts();
+    flash_set_rxdelay(2, 16);
+    const uint32_t ref = flash_sum(256u * 1024u);
+    const uint32_t ref2 = flash_sum(256u * 1024u);
+    qmi_hw->m[0].timing = cur;
+    restore_interrupts(irq);
+    printf("flash: reference %08lx %s\n", (unsigned long)ref, ref == ref2 ? "(stable)" : "(UNSTABLE)");
+    for (uint32_t rx = 0; rx < 8; rx++)
+        printf("flash: div %lu rxdelay %lu: %lu/%lu passes bad\n", (unsigned long)div,
+               (unsigned long)rx, (unsigned long)flash_trial(rx, div, passes, ref),
+               (unsigned long)passes);
 }
 
 void bringup_init(void) {

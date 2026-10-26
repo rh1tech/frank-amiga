@@ -39,6 +39,7 @@ set(OMEGA_SOURCES
 add_executable(frank-amiga-slave
     src/main.c
     src/host_link.c
+    src/link_pump.c
     src/platform/Memory.c
     src/platform/MemoryBoot.c
     src/platform/Planar.c
@@ -49,7 +50,7 @@ add_executable(frank-amiga-slave
 # of the same name; omega's own "../omega/X.h" includes resolve through
 # ${OMEGA_DIR}.
 target_include_directories(frank-amiga-slave PRIVATE
-    src src/platform ${OMEGA_DIR} ${FRANK_PLATFORM_DIR})
+    src src/platform ${REPO_ROOT}/common/amiga ${OMEGA_DIR} ${FRANK_PLATFORM_DIR})
 target_compile_definitions(frank-amiga-slave PRIVATE ${FRANK_DEFINITIONS}
     PICO_BUILD=1
     OMEGA_ENABLE_HDMI=1          # the direct (message ring) display path
@@ -66,6 +67,8 @@ target_compile_definitions(frank-amiga-slave PRIVATE ${FRANK_DEFINITIONS}
     OMEGA_CPU_CYCLES_PER_SLOT=2
     OMEGA_CPU_SLICE_SLOTS=8
     RING_WORDS=16384u
+    PICO_STACK_SIZE=0x1000       # core 0: all of SCRATCH_Y
+    PICO_CORE1_STACK_SIZE=0x1000 # core 1: all of SCRATCH_X
     PICO_HEAP_SIZE=0x100
 )
 target_compile_options(frank-amiga-slave PRIVATE

@@ -1,13 +1,15 @@
 /*
- * frank-amiga — master (RP2350B, U3), M0 bring-up firmware.
+ * frank-amiga — master (RP2350B, U3).
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Clocks, PSRAM, link HELLO/PING/soak, and the bench peripherals. Driven by
- * a line-oriented console on UART0 (J2): type `help`.
+ * Core 1 renders the Amiga's display (Denise) from the slave's message
+ * stream and drives HDMI; core 0 runs the link receiver, Paula's output,
+ * input and the console on UART0 (J2): type `help`.
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include "link_stream.h"
 #include <string.h>
 
 #include "pico/stdlib.h"
@@ -20,9 +22,18 @@
 #include "membench.h"
 #include "psram_init.h"
 #include "bringup.h"
+#include "denise/denise.h"
+#include "denise/denise_frames.h"
+#include "input.h"
+#include "stream.h"
+#include "audio/audio.h"
+#include "video/hstx_video.h"
+#include "pico/multicore.h"
 
 #define M_PSRAM_CS_PIN 47
-#define SOAK_MAX_BYTES (64u * 1024u)
+#define SOAK_MAX_BYTES (8u * 1024u)
+/* Frame records (4 x dvi_indexed_frame_t, ~136 KB) at the start of PSRAM. */
+#define PSRAM_RECORDS ((void *)0x11000000u)
 
 static link_t link;
 static link_session_t sess;
@@ -136,6 +147,114 @@ static void cmd_soak(int argc, char **argv) {
 }
 
 static void cmd_hello(int argc, char **argv) { slave_hello(); }
+
+/* ── The Amiga display ── */
+static bool amiga_running;
+
+static void core1_amiga(void) {
+    video_start();
+    hostCore1Loop();
+}
+
+static void amiga_start(void) {
+    if (amiga_running) return;
+    if (!video_init(VIDEO_640x480p50, denise_row, denise_frame_start)) {
+        printf("amiga: video init failed\n");
+        return;
+    }
+    denise_frames_init(PSRAM_RECORDS);
+    denise_c1_init();
+    denise_audio_init();
+    multicore_launch_core1(core1_amiga);
+    stream_start();
+    amiga_running = true;
+    printf("amiga: display %s, streaming from the slave\n", video_mode_name());
+}
+
+static void main_poll(void);
+
+static void cmd_stats(int argc, char **argv) {
+    const uint32_t f0 = dvi_frames_shown, r0 = dvi_refreshes;
+    const stream_stats_t s0 = stream_stats;
+    /* Measure for a second while the stream keeps running. */
+    const uint64_t until = time_us_64() + 1000000u;
+    while (time_us_64() < until) main_poll();
+    const stream_stats_t s1 = stream_stats;
+    printf("stats: shown %lu/s of %lu refreshes, link %lu chunks/s %lu kwords/s "
+           "busy %lu ms/s, errors %lu bad %lu gaps %lu resyncs %lu, corrupt %lu, "
+           "late rows %lu, audio dropped %lu\n",
+           (unsigned long)(dvi_frames_shown - f0), (unsigned long)(dvi_refreshes - r0),
+           (unsigned long)(s1.chunks - s0.chunks),
+           (unsigned long)((s1.words - s0.words) / 1000u),
+           (unsigned long)((s1.busy_us - s0.busy_us) / 1000u),
+           (unsigned long)s1.link_errors, (unsigned long)s1.bad_chunks,
+           (unsigned long)s1.seq_gaps, (unsigned long)s1.resyncs,
+           (unsigned long)denise_corrupt_count, (unsigned long)video_late_rows,
+           (unsigned long)denise_audio_dropped);
+}
+
+/* type <text...>: types into the Amiga (\n for Return). */
+static void cmd_type(int argc, char **argv) {
+    char buf[160];
+    size_t n = 0;
+    for (int i = 1; i < argc; i++) {
+        for (const char *p = argv[i]; *p && n < sizeof buf - 2; p++) {
+            if (p[0] == '\\' && p[1] == 'n') { buf[n++] = '\n'; p++; }
+            else buf[n++] = *p;
+        }
+        if (i + 1 < argc && n < sizeof buf - 2) buf[n++] = ' ';
+    }
+    buf[n] = 0;
+    input_type(buf);
+}
+
+/* key <hex code> [up|down|tap] */
+static void cmd_key(int argc, char **argv) {
+    if (argc < 2) return;
+    const uint8_t code = (uint8_t)strtoul(argv[1], NULL, 16);
+    const char *what = argc > 2 ? argv[2] : "tap";
+    if (strcmp(what, "up")) input_key(code, false);
+    if (strcmp(what, "down")) input_key(code, true);
+}
+
+/* mouse <dx> <dy> [buttons] */
+static void cmd_mouse(int argc, char **argv) {
+    if (argc < 3) return;
+    input_mouse(atoi(argv[1]), atoi(argv[2]), argc > 3 ? (uint8_t)atoi(argv[3]) : 0);
+}
+
+static void cmd_reset(int argc, char **argv) { stream_input(LINK_EV_RESET, 0, 0, 0); }
+
+/* vol <0..256>: output volume (256 = unity; default 128). */
+static void cmd_vol(int argc, char **argv) {
+    if (argc > 1) audio_set_volume((uint32_t)atoi(argv[1]));
+    extern volatile uint32_t audio_frames_played, denise_audio_produced;
+    const uint32_t p0 = denise_audio_produced, c0 = audio_frames_played;
+    const uint32_t r0 = dvi_refreshes;
+    extern volatile uint32_t denise_audio_lines, denise_audio_long;
+    const uint32_t l0 = denise_audio_lines, g0 = denise_audio_long;
+    const uint64_t until = time_us_64() + 2000000u;
+    while (time_us_64() < until) main_poll();
+    printf("audio: %lu line records (%lu long) per refresh\n",
+           (unsigned long)((denise_audio_lines - l0) / (dvi_refreshes - r0)),
+           (unsigned long)((denise_audio_long - g0) / (dvi_refreshes - r0)));
+    printf("audio: produced %lu/s, played %lu/s over %lu refreshes\n",
+           (unsigned long)(denise_audio_produced - p0) / 2u,
+           (unsigned long)(audio_frames_played - c0) / 2u,
+           (unsigned long)(dvi_refreshes - r0));
+    printf("vol %lu/256, ring %lu bytes queued, %lu rate adjustments\n",
+           (unsigned long)audio_get_volume(), (unsigned long)audio_queued(),
+           (unsigned long)denise_audio_adjusted);
+}
+
+static void main_poll(void) {
+    if (amiga_running) {
+        input_poll();
+        stream_poll();
+    } else {
+        bringup_poll();
+    }
+}
 static void cmd_clocks(int argc, char **argv) { frank_clocks_report(); }
 
 static const console_cmd_t cmds[] = {
@@ -143,6 +262,12 @@ static const console_cmd_t cmds[] = {
     { "ping",   cmd_ping,   "ping [n]: control round trips" },
     { "soak",   cmd_soak,   "soak <clkdiv> <seconds> [bytes]: link soak" },
     { "clocks", cmd_clocks, "show clocks" },
+    { "stats",  cmd_stats,  "display/link statistics over one second" },
+    { "type",   cmd_type,   "type <text>: type into the Amiga (\\n = Return)" },
+    { "key",    cmd_key,    "key <hex> [up|down|tap]: Amiga raw keycode" },
+    { "mouse",  cmd_mouse,  "mouse <dx> <dy> [buttons]" },
+    { "reset",  cmd_reset,  "Ctrl-Amiga-Amiga" },
+    { "vol",    cmd_vol,    "vol [0..256]: audio output volume" },
     BRINGUP_COMMANDS
     { NULL, NULL, NULL },
 };
@@ -167,8 +292,12 @@ int main(void) {
     sess.ctrl_tx = ctrl_tx;
     sess.ctrl_rx = ctrl_rx;
     sess.handshake_timeout_us = 200000;
-    slave_hello();
-
+    stream_init(&sess);
     bringup_init();
-    console_run(cmds, bringup_poll);
+    /* Wait for the slave (it may still be booting), then run the Amiga. */
+    for (int i = 0; i < 50 && !slave_hello(); i++) sleep_ms(100);
+    link_set_bulk_clkdiv(&link, 1.0f);
+    sess.handshake_timeout_us = 20000;
+    amiga_start();
+    console_run(cmds, main_poll);
 }

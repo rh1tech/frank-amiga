@@ -1,6 +1,13 @@
-# M0 bring-up measurements (2026-10-26)
+# Bring-up measurements (2026-10-26)
 
-All on the FRANK Core 2 Proto, both halves at 528 MHz, 1.65 V.
+**Clock decision:** both halves run at **504 MHz**, 1.65 V (the clock frank-linux
+and murmsnes have proven). 528 MHz was tried first so HSTX could make 720x576p50
+from PLL_USB; it produced random single-bit read errors on both chips (corrupted
+pointers, return addresses) within ~30 s of real load, while the same code ran
+clean at 480 MHz. At 504 MHz clk_hstx = clk_sys/4 = 126 MHz, so the output is
+640x480 (a 50 Hz variant with a long vertical blank for PAL, and 60 Hz).
+
+The M0 numbers below were taken at 528 MHz.
 
 ## Clocks
 - PLL_SYS 1584 MHz VCO / 3 = 528 MHz; clk_usb = PLL_SYS/11 = 48 MHz; clk_peri = PLL_SYS/4 = 132 MHz.

@@ -6,7 +6,7 @@
 # its loop inside the transmitter's byte period, and each side derives that
 # from its own clk_sys. build.sh passes the same value to both.
 
-set(CPU_MHZ       "528" CACHE STRING "clk_sys of both halves, MHz")
+set(CPU_MHZ       "504" CACHE STRING "clk_sys of both halves, MHz")
 set(PSRAM_MAX_MHZ "133" CACHE STRING "PSRAM ceiling, MHz")
 set(FLASH_MAX_MHZ "66"  CACHE STRING "Flash ceiling, MHz")
 

@@ -7,20 +7,17 @@
  * to finish its loop inside the transmitter's byte period, and each side
  * derives that from its own clk_sys.
  *
- * 528 MHz rather than the 504 the other FRANK Core 2 firmwares use, because
- * of HDMI. HSTX wants a 27 MHz pixel clock for 720x576p50 (TMDS 270 Mbit/s,
- * clk_hstx 135 MHz in DDR), and 504 MHz has no integer path to it. So the
- * USB PLL is dedicated to HSTX and clk_usb comes from PLL_SYS instead:
- * 528 / 11 = 48 MHz exactly. Switching video mode then retunes only
- * PLL_USB and never the CPUs, which matters because a coordinated re-clock
- * of both halves over the link would be fragile.
+ * 504 MHz at 1.65 V: the clock the board's other firmwares (frank-linux,
+ * murmsnes) have proven on both halves. 528 MHz was tried for HDMI's sake
+ * and produced random single-bit read errors on both chips within a minute.
  *
- *   PLL_SYS  12 MHz x 132 = 1584 MHz VCO / 3 / 1 = 528 MHz -> clk_sys
- *   clk_usb  = PLL_SYS / 11 = 48 MHz
- *   clk_peri = PLL_SYS / 4  = 132 MHz (UART, SPI; SPI0 can reach 33 MHz)
- *   PLL_USB  = TMDS bit rate (270 or 252 MHz) -> clk_hstx = PLL_USB / 2
- *   QMI M0   = flash, /8 = 66 MHz
- *   QMI M1   = PSRAM, /4 = 132 MHz
+ *   PLL_SYS  12 MHz x 126 = 1512 MHz VCO / 3 / 1 = 504 MHz -> clk_sys
+ *   PLL_USB  48 MHz (SDK default) -> clk_usb
+ *   clk_peri = PLL_SYS / 4 = 126 MHz (UART, SPI)
+ *   clk_hstx = PLL_SYS / 4 = 126 MHz: 252 Mbit/s TMDS, the 25.2 MHz pixel
+ *              clock of 640x480. Nothing else is reachable from 504 MHz.
+ *   QMI M0   = flash, /8 = 63 MHz
+ *   QMI M1   = PSRAM, /4 = 126 MHz
  */
 #include "clocks.h"
 
@@ -67,24 +64,21 @@ bool frank_clocks_init(void) {
         return false;
 
     const uint32_t sys_hz = clock_get_hz(clk_sys);
-    /* The SDK leaves clk_peri on PLL_USB, which HSTX is about to take. */
     clock_configure(clk_peri, 0, CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
                     sys_hz, sys_hz / 4u);
-    clock_configure(clk_usb, 0, CLOCKS_CLK_USB_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
-                    sys_hz, 48u * MHZ);
     return true;
 }
 
 bool frank_clocks_set_tmds(uint32_t bit_khz) {
-    /* VCO 750..1600 MHz; find any integer configuration hitting the TMDS
-     * bit rate exactly, then route PLL_USB / 2 to clk_hstx. */
-    uint vco_hz, pd1, pd2;
-    if (!check_sys_clock_hz(bit_khz * 1000u, &vco_hz, &pd1, &pd2))
+    /* HSTX sends two bits per clk_hstx cycle: clk_hstx = bit rate / 2, and
+     * it must divide clk_sys exactly. */
+    const uint32_t sys_hz = clock_get_hz(clk_sys);
+    const uint32_t hstx_hz = bit_khz * 500u;
+    if (!hstx_hz || sys_hz % hstx_hz)
         return false;
-    pll_init(pll_usb, 1, vco_hz, pd1, pd2);
     return clock_configure(clk_hstx, 0,
-                           CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB,
-                           bit_khz * 1000u, bit_khz * 500u);
+                           CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLK_SYS,
+                           sys_hz, hstx_hz);
 }
 
 void frank_clocks_report(void) {
