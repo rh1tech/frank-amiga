@@ -24,6 +24,7 @@
 #include "stream.h"
 #include "video/hstx_video.h"
 #include "osd_font.h"
+#include "usb_amiga.h"
 
 #define COLS 36
 #define ROWS 14
@@ -86,7 +87,7 @@ static const char *base(const char *path) {
     return b ? b + 1 : path;
 }
 
-enum { I_DF0, I_KICK, I_RESET, I_VOL, I_EXIT, I_COUNT };
+enum { I_DF0, I_KICK, I_RESET, I_VOL, I_JOY, I_EXIT, I_COUNT };
 
 static void draw(void) {
     char line[COLS + 1];
@@ -100,6 +101,8 @@ static void draw(void) {
         put(2 + I_RESET, " Reset (Ctrl-Amiga-Amiga)");
         snprintf(line, sizeof line, " Volume: %lu/256   (left/right)", (unsigned long)audio_get_volume());
         put(2 + I_VOL, line);
+        snprintf(line, sizeof line, " Joystick keys: %s", usb_amiga_joykeys_name(media_config.joykeys));
+        put(2 + I_JOY, line);
         put(2 + I_EXIT, " Back to the Amiga");
         put(ROWS - 1, " up/down, Enter, Esc");
         highlight = (uint8_t)(2 + sel);
@@ -163,6 +166,9 @@ void osd_key(uint8_t hid, bool down) {
         if (mode == M_MAIN && sel == I_VOL) {
             int v = (int)audio_get_volume() + (hid == 0x4F ? 16 : -16);
             audio_set_volume((uint32_t)(v < 0 ? 0 : v > 256 ? 256 : v));
+        } else if (mode == M_MAIN && sel == I_JOY) {
+            const int n = JOYKEYS_COUNT, d = hid == 0x4F ? 1 : n - 1;
+            media_config.joykeys = (uint8_t)((media_config.joykeys + d) % n);
         }
         break;
     case 0x29:                                                  /* Esc */
@@ -179,6 +185,7 @@ void osd_key(uint8_t hid, bool down) {
             sel = top = 0;
             break;
         case I_RESET: stream_input(LINK_EV_RESET, 0, 0, 0); visible = false; break;
+        case I_JOY: media_config.joykeys = (uint8_t)((media_config.joykeys + 1) % JOYKEYS_COUNT); break;
         case I_EXIT: visible = false; break;
         }
         break;

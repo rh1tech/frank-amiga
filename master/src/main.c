@@ -222,6 +222,12 @@ static void cmd_key(int argc, char **argv) {
     if (strcmp(what, "down")) input_key(code, true);
 }
 
+/* joy <port 0|1> <bits: 1 up 2 down 4 left 8 right 16 fire 32 fire2> */
+static void cmd_joy(int argc, char **argv) {
+    if (argc < 3) return;
+    usb_amiga_force_joy(atoi(argv[1]), (uint8_t)strtol(argv[2], NULL, 0));
+}
+
 /* mouse <dx> <dy> [buttons] */
 static void cmd_mouse(int argc, char **argv) {
     if (argc < 3) return;
@@ -319,6 +325,7 @@ static const console_cmd_t cmds[] = {
     { "type",   cmd_type,   "type <text>: type into the Amiga (\\n = Return)" },
     { "key",    cmd_key,    "key <hex> [up|down|tap]: Amiga raw keycode" },
     { "mouse",  cmd_mouse,  "mouse <dx> <dy> [buttons]" },
+    { "joy",    cmd_joy,    "joy <port> <bits> (1U 2D 4L 8R 16F 32F2)" },
     { "reset",  cmd_reset,  "Ctrl-Amiga-Amiga" },
     { "vol",    cmd_vol,    "vol [0..256]: audio output volume" },
     { "osd",    cmd_osd,    "toggle the on-screen menu (F12)" },

@@ -7,6 +7,8 @@
  *   kick=/amiga/kick/kick13.rom     Kickstart (256 or 512 KB)
  *   ext=/amiga/kick/aros-ext.bin    optional extended ROM (AROS)
  *   df0=/amiga/adf/workbench.adf    optional disk in DF0
+ *   joykeys=arrows                  keyboard joystick in port 2: off, arrows
+ *                                   (Right Ctrl/Alt fire), numpad (0 . fire)
  * Uploads go over the link (link_proto.h LINK_OP_UPLOAD_*) with the stream
  * paused; BOOT then makes the slave restart from them.
  */
@@ -20,6 +22,7 @@
 
 #include "link_proto.h"
 #include "stream.h"
+#include "usb_amiga.h"
 
 #define INI_PATH "0:/amiga/frank-amiga.ini"
 
@@ -124,6 +127,7 @@ bool media_load_config(void) {
         if (!strcmp(k, "kick")) prefix_path(media_config.kick, sizeof media_config.kick, v);
         else if (!strcmp(k, "ext")) prefix_path(media_config.ext, sizeof media_config.ext, v);
         else if (!strcmp(k, "df0")) prefix_path(media_config.df0, sizeof media_config.df0, v);
+        else if (!strcmp(k, "joykeys")) media_config.joykeys = usb_amiga_joykeys_parse(v);
     }
     f_close(&f);
     printf("media: kick=%s ext=%s df0=%s\n", media_config.kick, media_config.ext,

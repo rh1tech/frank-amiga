@@ -48,9 +48,16 @@ enum {
 enum {
     LINK_EV_KEY   = 1,   /* a = Amiga raw keycode, b = 1 released          */
     LINK_EV_MOUSE = 2,   /* a = dx (int8), b = dy (int8), c = buttons       */
-    LINK_EV_JOY   = 3,   /* a = port, b = bits (U D L R F1 F2), c = 0       */
+    LINK_EV_JOY   = 3,   /* a = port, b = LINK_JOY_* bits, c = 0            */
     LINK_EV_RESET = 4,   /* keyboard reset (Ctrl-A-A)                       */
 };
+/* LINK_EV_JOY directions and buttons. */
+#define LINK_JOY_UP    0x01u
+#define LINK_JOY_DOWN  0x02u
+#define LINK_JOY_LEFT  0x04u
+#define LINK_JOY_RIGHT 0x08u
+#define LINK_JOY_FIRE  0x10u
+#define LINK_JOY_FIRE2 0x20u
 typedef struct __attribute__((packed)) {
     uint8_t type, a, b, c;
 } link_input_ev_t;

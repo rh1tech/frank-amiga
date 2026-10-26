@@ -12,6 +12,7 @@
 
 typedef struct {
     char kick[128], ext[128], df0[128];
+    uint8_t joykeys;            /* usb_amiga.h JOYKEYS_* */
 } media_config_t;
 extern media_config_t media_config;
 

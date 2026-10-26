@@ -161,6 +161,18 @@ static void sample_banks(void) {
     chip_bank_sample(a, w, n);
 }
 
+/* Joysticks (LINK_EV_JOY bits) by port. */
+static uint8_t joy_bits[2];
+static bool joy0_is_stick;
+
+/* JOYxDAT of a joystick: right = bit 1, left = bit 9, bit 0 = down ^ right,
+ * bit 8 = up ^ left. */
+static uint16_t joy_word(uint8_t b) {
+    const unsigned r = !!(b & LINK_JOY_RIGHT), l = !!(b & LINK_JOY_LEFT);
+    const unsigned d = !!(b & LINK_JOY_DOWN), u = !!(b & LINK_JOY_UP);
+    return (uint16_t)(r << 1 | (d ^ r) | l << 9 | (u ^ l) << 8);
+}
+
 void host_frame_paced(void) {
     pace();
     sample_banks();
@@ -173,9 +185,16 @@ void host_frame_paced(void) {
                 key_q[key_head++ % KEYQ] = (uint8_t)((ev.a & 0x7F) | (ev.b ? 0x80 : 0));
             break;
         case LINK_EV_MOUSE:
+            joy0_is_stick = false;
             mouse_dx += (int8_t)ev.a;
             mouse_dy += (int8_t)ev.b;
             mouse_buttons = ev.c;
+            break;
+        case LINK_EV_JOY:
+            if (ev.a < 2) {
+                joy_bits[ev.a] = ev.b;
+                if (ev.a == 0) joy0_is_stick = true;
+            }
             break;
         case LINK_EV_RESET:
             hostResetRequested = 1;
@@ -187,13 +206,24 @@ void host_frame_paced(void) {
     const int dx = clamp_delta(mouse_dx), dy = clamp_delta(mouse_dy);
     mouse_dx -= dx;
     mouse_dy -= dy;
-    /* JOY0DAT: vertical counter in the high byte, horizontal in the low. */
-    const uint8_t h = (uint8_t)((chipset.joy0dat & 0xFF) + dx);
-    const uint8_t v = (uint8_t)((chipset.joy0dat >> 8) + dy);
-    chipset.joy0dat = (uint16_t)(v << 8 | h);
-    if (mouse_buttons & 1) CIAA.pra &= (uint8_t)~0x40; else CIAA.pra |= 0x40;
-    if (mouse_buttons & 2) chipset.potinp &= (uint16_t)~0x0400; else chipset.potinp |= 0x0400;
+    /* JOY0DAT: vertical counter in the high byte, horizontal in the low
+     * (a mouse), or a joystick's directions once port 0 has one. */
+    if (joy0_is_stick) {
+        chipset.joy0dat = joy_word(joy_bits[0]);
+    } else {
+        const uint8_t h = (uint8_t)((chipset.joy0dat & 0xFF) + dx);
+        const uint8_t v = (uint8_t)((chipset.joy0dat >> 8) + dy);
+        chipset.joy0dat = (uint16_t)(v << 8 | h);
+    }
+    chipset.joy1dat = joy_word(joy_bits[1]);
+    const bool fire0 = (mouse_buttons & 1) || (joy_bits[0] & LINK_JOY_FIRE);
+    const bool fire1 = joy_bits[1] & LINK_JOY_FIRE;
+    if (fire0) CIAA.pra &= (uint8_t)~0x40; else CIAA.pra |= 0x40;
+    if (fire1) CIAA.pra &= (uint8_t)~0x80; else CIAA.pra |= 0x80;
+    /* Second buttons: POTGOR DATLY (port 0) / DATRY (port 1); third: DATLX. */
+    if ((mouse_buttons & 2) || (joy_bits[0] & LINK_JOY_FIRE2)) chipset.potinp &= (uint16_t)~0x0400; else chipset.potinp |= 0x0400;
     if (mouse_buttons & 4) chipset.potinp &= (uint16_t)~0x0100; else chipset.potinp |= 0x0100;
+    if (joy_bits[1] & LINK_JOY_FIRE2) chipset.potinp &= (uint16_t)~0x4000; else chipset.potinp |= 0x4000;
     /* One key per frame: the keyboard's serial handshake cannot take more. */
     if (key_tail != key_head) {
         const uint8_t e = key_q[key_tail++ % KEYQ];
