@@ -181,6 +181,11 @@ static void amiga_start(void) {
 static void main_poll(void);
 
 static void cmd_stats(int argc, char **argv) {
+#ifdef DENISE_MSG_STATS
+    extern volatile uint32_t denise_msg_count[16], denise_msg_words[16];
+    uint32_t mc0[16], mw0[16];
+    for (int i = 0; i < 16; i++) { mc0[i] = denise_msg_count[i]; mw0[i] = denise_msg_words[i]; }
+#endif
     const uint32_t f0 = dvi_frames_shown, r0 = dvi_refreshes;
     const stream_stats_t s0 = stream_stats;
     /* Measure for a second while the stream keeps running. */
@@ -189,7 +194,7 @@ static void cmd_stats(int argc, char **argv) {
     const stream_stats_t s1 = stream_stats;
     printf("stats: shown %lu/s of %lu refreshes, link %lu chunks/s %lu kwords/s "
            "busy %lu ms/s, errors %lu bad %lu gaps %lu resyncs %lu, corrupt %lu, "
-           "late rows %lu, audio dropped %lu\n",
+           "late rows %lu, audio dropped %lu, polls %lu ring full %lu\n",
            (unsigned long)(dvi_frames_shown - f0), (unsigned long)(dvi_refreshes - r0),
            (unsigned long)(s1.chunks - s0.chunks),
            (unsigned long)((s1.words - s0.words) / 1000u),
@@ -197,7 +202,16 @@ static void cmd_stats(int argc, char **argv) {
            (unsigned long)s1.link_errors, (unsigned long)s1.bad_chunks,
            (unsigned long)s1.seq_gaps, (unsigned long)s1.resyncs,
            (unsigned long)denise_corrupt_count, (unsigned long)video_late_rows,
-           (unsigned long)denise_audio_dropped);
+           (unsigned long)denise_audio_dropped,
+           (unsigned long)(s1.polls - s0.polls), (unsigned long)(s1.ring_full - s0.ring_full));
+#ifdef DENISE_MSG_STATS
+    printf("messages/s by type (count/words):");
+    for (int i = 0; i < 16; i++)
+        if (denise_msg_count[i] != mc0[i])
+            printf(" %d:%lu/%lu", i, (unsigned long)(denise_msg_count[i] - mc0[i]),
+                   (unsigned long)(denise_msg_words[i] - mw0[i]));
+    printf("\n");
+#endif
 }
 
 /* type <text...>: types into the Amiga (\n for Return). */

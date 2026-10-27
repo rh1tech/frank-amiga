@@ -12,11 +12,13 @@ enum {
     MSG_BEGIN = 1,   // + 3 words: frame layout, frame number
     MSG_HIRES,       // + 2 words per block: planes 1..4
     MSG_LORES,       // + 3 words per block: planes 1..6; extra bit 0 = HAM
-    MSG_PALETTE,     // + 16 words: 32 colours, 0x0RGB, two per word
+    MSG_PALETTE,     // + 1 + extra words: mask of the colours that changed,
+                     //   then those colours (0x0RGB) in order, two per word
     MSG_END,         // + 1 word: border colour (0x0RGB)
     MSG_SPRITE,      // + 1-2 words: sprite planes; extra = base | att | behind
     MSG_ROW_END,     // no words: image row `row` ends (its border colour)
-    MSG_COLOUR,      // + 1 word: 0x0RGB; extra = register, x = raster column
+    MSG_COLOUR,      // + extra words, one per change in order:
+                     //   MSG_COLOUR_WORD(x = raster column, register, 0x0RGB)
     MSG_ROW_SAME,    // no words: image row `row` is unchanged (copy it)
     // frank-amiga: Paula's line record (omega/Audio.h); extra = word count.
     MSG_AUDIO,
@@ -41,6 +43,12 @@ enum {
 #define MSG_RUN_COUNT_MASK ((uint32_t)(MSG_RUN_MAX - 1) << MSG_RUN_SHIFT)
 // Header bits that a block must match to join a run: type, row, HAM.
 #define MSG_RUN_KEY_MASK (~(MSG_RUN_COUNT_MASK | MSG_HEADER(0, 0, 0x3ff, 0)))
+// frank-amiga: one Copper colour change of a MSG_COLOUR message. State of
+// the Art's chunky part changes ~36 colours a line: a message each (two
+// words) was a third of the stream, and full palettes another quarter.
+#define MSG_COLOUR_WORD(x, reg, rgb) \
+    ((uint32_t)(rgb) | (uint32_t)(reg) << 12 | (uint32_t)(x) << 17)
+#define MSG_COLOUR_MAX (MSG_MAX_WORDS - 1)   // fits the longest message
 
 // The run being collected (see Host.c): msg[0] is its header, words its
 // length so far (0: none), next_x the x its next block must have;

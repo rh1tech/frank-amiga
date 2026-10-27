@@ -179,13 +179,17 @@ static inline void runFlush(void) {
 // of the Art's chunky part: 36 changes a line) into dozens of runs. Core 1
 // places a change by its column whatever the order. HAM rows keep sending
 // at once: their pixels take the palette as the blocks arrive.
-#define COLOUR_QUEUE_MAX 64
-static uint32_t colour_queue[2 * COLOUR_QUEUE_MAX];
+// They go as one message (the row of the first; core 1 takes each one's
+// row from its own message order: all are on the open row).
+#define COLOUR_QUEUE_MAX MSG_COLOUR_MAX
+static uint32_t colour_queue[1 + COLOUR_QUEUE_MAX];
 static uint32_t colour_queued;
+static int colour_queue_row;
 
 static void __attribute__((noinline)) colourQueueSend(void) {
     runFlush();
-    ringPush(colour_queue, 2u * colour_queued);
+    colour_queue[0] = MSG_HEADER(MSG_COLOUR, colour_queue_row, 0, colour_queued);
+    ringPush(colour_queue, 1u + colour_queued);
     colour_queued = 0;
 }
 
@@ -234,24 +238,40 @@ static inline uint32_t argbToOcs(uint32_t argb) {
 
 // Out of line, like the other rare paths, so the per-block producers stay
 // small (no large stack frame or register saves on every block).
-// Sends the whole palette; register `except` (if >= 0) as `colour`.
+// Sends the colours core 1 does not have yet; register `except` (if >= 0)
+// as `colour`. core1_palette is core 1's palette as of the messages sent;
+// invalid at each frame, so a frame core 1 resynchronised at starts with
+// the whole palette.
+static uint16_t core1_palette[32];
+static bool core1_palette_valid;
+
 static void __attribute__((noinline)) hostDirectSendPaletteWith(
     int except, uint16_t colour) {
     colourQueueFlush();
     host_run.palette_sent = internal.paletteGeneration;
     row_colours_changed = true;
     runFlush(); // the blocks before the change use the old palette
-    uint32_t msg[17];
-    msg[0] = MSG_HEADER(MSG_PALETTE, 0, 0, 0);
-    for (int i = 0; i < 16; ++i)
-        msg[1 + i] = ((&chipset.color00)[2 * i] & 0xfffu) |
-                     ((uint32_t)(&chipset.color00)[2 * i + 1] & 0xfffu) << 16;
-    if (except >= 0) {
-        uint32_t *pair = &msg[1 + except / 2];
-        const int shift = (except & 1) ? 16 : 0;
-        *pair = (*pair & ~(0xffffu << shift)) | (uint32_t)colour << shift;
+    uint32_t msg[2 + 16];
+    uint32_t mask = 0, n = 0;
+    for (int i = 0; i < 32; ++i) {
+        const uint16_t c = i == except ? colour : (uint16_t)((&chipset.color00)[i] & 0xfffu);
+        if (core1_palette_valid && c == core1_palette[i])
+            continue;
+        core1_palette[i] = c;
+        mask |= 1u << i;
+        if (n & 1)
+            msg[2 + n / 2] |= (uint32_t)c << 16;
+        else
+            msg[2 + n / 2] = c;
+        n++;
     }
-    ringPush(msg, count_of(msg));
+    core1_palette_valid = true;
+    if (!mask)
+        return;
+    const uint32_t words = (n + 1) / 2;
+    msg[0] = MSG_HEADER(MSG_PALETTE, 0, 0, words);
+    msg[1] = mask;
+    ringPush(msg, 2 + words);
 }
 
 static void hostDirectSendPalette(void) {
@@ -311,6 +331,7 @@ static void hostDirectBegin(void) {
         (uint32_t)rotation | (uint32_t)height << 16,
         ++direct_frame_no,
     };
+    core1_palette_valid = false;
     // A new layout maps rows differently: nothing is unchanged.
     if (msg[1] != row_layout[0] || msg[2] != row_layout[1]) {
         row_layout[0] = msg[1];
@@ -347,16 +368,16 @@ void hostDirectColour(int reg, uint16_t old, uint16_t value) {
     host_run.palette_sent = internal.paletteGeneration;
     row_colours_changed = true;
     x = x < 0 ? 0 : x > 0x3ff ? 0x3ff : x;
-    if (!(chipset.bplcon0 & 0x800) && colour_queued < COLOUR_QUEUE_MAX) {
-        colour_queue[2 * colour_queued] = MSG_HEADER(MSG_COLOUR, row, x, reg);
-        colour_queue[2 * colour_queued + 1] = value;
-        colour_queued++;
-        return;
-    }
-    colourQueueFlush();
-    runFlush();
-    const uint32_t msg[2] = { MSG_HEADER(MSG_COLOUR, row, x, reg), value };
-    ringPush(msg, count_of(msg));
+    core1_palette[reg] = value;
+    if (colour_queued && (row != colour_queue_row || colour_queued == COLOUR_QUEUE_MAX))
+        colourQueueSend();
+    if (!colour_queued)
+        colour_queue_row = row;
+    colour_queue[1 + colour_queued++] = MSG_COLOUR_WORD(x, reg, value & 0xfffu);
+    // HAM rows send at once: their pixels take the palette as the blocks
+    // arrive.
+    if (chipset.bplcon0 & 0x800)
+        colourQueueSend();
 }
 
 // Only rows without blocks need their own colour position (rows with

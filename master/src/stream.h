@@ -12,6 +12,7 @@
 
 typedef struct {
     uint32_t chunks, words, link_errors, bad_chunks, seq_gaps, resyncs;
+    uint32_t polls, ring_full;          /* stream_poll() calls; refused: ring full */
     uint64_t busy_us;
 } stream_stats_t;
 extern stream_stats_t stream_stats;

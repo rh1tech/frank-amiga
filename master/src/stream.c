@@ -8,6 +8,7 @@
  * payload to the ring. A chunk that fails its checks, or a gap in the
  * sequence, drops what is queued and asks the slave to resume at the next
  * frame start (link_stream.h).
+
  */
 #include "stream.h"
 
@@ -62,8 +63,12 @@ bool stream_last_full;   /* the last chunk was full: the slave has more */
 
 bool stream_poll(void) {
     stream_last_full = false;
-    if (!running || denise_ring_space() < LINK_STREAM_PAYLOAD_WORDS)
+    if (!running) return false;
+    stream_stats.polls++;
+    if (denise_ring_space() < LINK_STREAM_PAYLOAD_WORDS) {
+        stream_stats.ring_full++;
         return false;
+    }
     if (denise_resync_request) {
         denise_resync_request = 0;
         resync = true;

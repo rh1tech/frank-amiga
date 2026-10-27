@@ -45,6 +45,9 @@ static inline uint32_t ringSlot(uint32_t pos) {
     return pos >= RING_WORDS ? pos - RING_WORDS : pos;
 }
 static volatile uint32_t c1_oldest_frame;
+#ifdef DENISE_MSG_STATS
+volatile uint32_t denise_msg_count[16], denise_msg_words[16];
+#endif
 volatile uint32_t denise_audio_lines, denise_audio_long;
 
 uint32_t denise_ring_space(void) {
@@ -606,26 +609,26 @@ static void C1_FUNC(c1End)(uint16_t border) {
 }
 
 // Takes the new colours and logs the changed ones for the frame being drawn.
-static void C1_FUNC(c1Palette)(const uint32_t *pairs) {
+// frank-amiga: the message carries only the colours in `mask`, in order,
+// two per word.
+static void C1_FUNC(c1Palette)(uint32_t mask, const uint32_t *pairs) {
     dvi_indexed_frame_t *rec = c1_record;
-    for (uint32_t i = 0; i < 16u; ++i) {
-        const uint32_t pair = pairs[i];
-        for (uint32_t k = 0; k < 2u; ++k) {
-            const uint32_t reg = 2u * i + k;
-            const uint16_t colour = (uint16_t)(pair >> (16u * k));
-            if (colour == c1_palette[reg])
-                continue;
-            c1_palette[reg] = colour;
-            if (!c1_image)
-                continue;
-            // Before any row: the frame's starting palette. A full log
-            // drops the change for this frame; the next frame starts from
-            // the complete palette again.
-            if (c1_open_row < 0 && c1_mark_row < 0)
-                rec->initial_palette[reg] = colour;
-            else if (rec->log_used < DVI_MAX_PALETTE_LOG)
-                rec->palette_log[rec->log_used++] = reg << 12 | colour;
-        }
+    for (uint32_t n = 0; mask; ++n) {
+        const uint32_t reg = (uint32_t)__builtin_ctz(mask);
+        mask &= mask - 1u;
+        const uint16_t colour = (uint16_t)(pairs[n / 2u] >> (16u * (n & 1u)));
+        if (colour == c1_palette[reg])
+            continue;
+        c1_palette[reg] = colour;
+        if (!c1_image)
+            continue;
+        // Before any row: the frame's starting palette. A full log
+        // drops the change for this frame; the next frame starts from
+        // the complete palette again.
+        if (c1_open_row < 0 && c1_mark_row < 0)
+            rec->initial_palette[reg] = colour;
+        else if (rec->log_used < DVI_MAX_PALETTE_LOG)
+            rec->palette_log[rec->log_used++] = reg << 12 | colour;
     }
 }
 
@@ -747,6 +750,9 @@ void C1_FUNC(hostCore1Loop)(void) {
             const int row = (int)((header >> 4) & 0x1ffu);
             const int x = (int)((header >> 13) & 0x3ffu);
             uint32_t length;
+#ifdef DENISE_MSG_STATS
+            denise_msg_count[type]++;
+#endif
             switch (type) {
             case MSG_DPF: {
                 const uint32_t st = header >> 23;
@@ -775,13 +781,19 @@ void C1_FUNC(hostCore1Loop)(void) {
                 break;
             }
             case MSG_PALETTE:
-                c1Palette(&msg[1]);
-                length = 17;
+                c1Palette(msg[1], &msg[2]);
+                length = 2 + (header >> 23);
                 break;
-            case MSG_COLOUR:
-                c1Colour(row, x, (int)(header >> 23 & 31u), (uint16_t)msg[1]);
-                length = 2;
+            case MSG_COLOUR: {
+                const uint32_t n = header >> 23;
+                for (uint32_t i = 1; i <= n; ++i) {
+                    const uint32_t w = msg[i];
+                    c1Colour(row, (int)(w >> 17 & 0x3ffu), (int)(w >> 12 & 31u),
+                             (uint16_t)(w & 0xfffu));
+                }
+                length = 1 + n;
                 break;
+            }
             case MSG_BEGIN:
                 c1Begin(msg[1], msg[2], msg[3]);
                 length = 4;
@@ -830,6 +842,9 @@ void C1_FUNC(hostCore1Loop)(void) {
                 c1_image = NULL;
                 continue;
             }
+#ifdef DENISE_MSG_STATS
+            denise_msg_words[type] += length;
+#endif
             tail = ringAdvance(tail, length);
             __atomic_store_n(&ring_tail, tail, __ATOMIC_RELEASE);
         }

@@ -81,11 +81,11 @@ static uint32_t msg_words(uint32_t h) {
     case MSG_BEGIN:    return 4;
     case MSG_HIRES:    return 1 + 2 * (((h >> MSG_RUN_SHIFT) & (MSG_RUN_MAX - 1)) + 1);
     case MSG_LORES:    return 1 + 3 * (((h >> MSG_RUN_SHIFT) & (MSG_RUN_MAX - 1)) + 1);
-    case MSG_PALETTE:  return 17;
+    case MSG_PALETTE:  return 2 + (h >> 23);
     case MSG_END:      return 2;
     case MSG_SPRITE:   return (h >> 28) & 1u ? 3 : 2;   /* attached */
     case MSG_ROW_END:  return 1;
-    case MSG_COLOUR:   return 2;
+    case MSG_COLOUR:   return 1 + (h >> 23);
     case MSG_ROW_SAME: return 1;
     case MSG_AUDIO:    return 1 + (h >> 23);
     case MSG_DPF:      return 1;
