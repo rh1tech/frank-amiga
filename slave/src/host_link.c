@@ -376,14 +376,28 @@ static void hostDirectRowEndVideo(int row, int drawn) {
 volatile uint32_t host_dpf_rows;
 static int dpf_row = -1;
 static uint32_t dpf_state = ~0u;
+// The playfields' scroll difference (PF2H - PF1H, lores pixels) is applied
+// here: the delayed playfield's plane words are shifted into line with the
+// other's, carrying bits over from the previous block of the run, so every
+// DPF block reaches core 1 / the master aligned (MSG_DPF delta 0), where it
+// takes the direct path. A block that does not follow the previous one
+// starts with empty carry bits.
+static int dpf_delta;             // PF2H - PF1H of the row's blocks
+static int dpf_next_x = -1000;    // where a following block would start
+static uint64_t dpf_carry[3];     // the shifted planes' recent words, newest low
+
 static inline uint32_t dpfBlockFlag(int row) {
     if (!(chipset.bplcon0 & 0x400))
         return 0;
     const int delta = (int)((chipset.bplcon1 >> 4) & 15) - (int)(chipset.bplcon1 & 15);
-    const uint32_t st = ((uint32_t)delta & 31u) | ((uint32_t)(chipset.bplcon2 >> 6) & 1u) << 5;
-    if (row != dpf_row || st != dpf_state) {
+    // Sent with delta 0: the shift is done here.
+    const uint32_t st = ((uint32_t)(chipset.bplcon2 >> 6) & 1u) << 5;
+    if (row != dpf_row || st != dpf_state || delta != dpf_delta) {
+        if (row != dpf_row || delta != dpf_delta)
+            dpf_next_x = -1000;
         dpf_row = row;
         dpf_state = st;
+        dpf_delta = delta;
         runFlush();
         host_dpf_rows++;
         const uint32_t msg = MSG_HEADER(MSG_DPF, row, 0, st);
@@ -393,10 +407,34 @@ static inline uint32_t dpfBlockFlag(int row) {
     return MSG_RUN_DPF;
 }
 
+// Shifts a plane right by `bits` (1..15 LORES, 2..30 HIRES), the earlier
+// words' bits coming in from the left.
+static inline uint16_t dpfShift(uint16_t w, int i, int bits) {
+    const uint64_t h = dpf_carry[i] << 16 | w;
+    dpf_carry[i] = h;
+    return (uint16_t)(h >> bits);
+}
+
+static inline void dpfAlign(int x, int step, int bits_per_lores,
+                            uint16_t *a, uint16_t *b, uint16_t *c) {
+    if (x != dpf_next_x)
+        dpf_carry[0] = dpf_carry[1] = dpf_carry[2] = 0;
+    dpf_next_x = x + step;
+    const int bits = (dpf_delta < 0 ? -dpf_delta : dpf_delta) * bits_per_lores;
+    *a = dpfShift(*a, 0, bits);
+    *b = dpfShift(*b, 1, bits);
+    if (c)
+        *c = dpfShift(*c, 2, bits);
+}
+
 void hostDirectHires(int row, int x, uint16_t p1, uint16_t p2,
                      uint16_t p3, uint16_t p4) {
     hostDirectSyncPalette();
     const uint32_t dpf = dpfBlockFlag(row);
+    if (dpf && dpf_delta) {
+        if (dpf_delta > 0) dpfAlign(x, 16, 2, &p2, &p4, NULL);   // PF2 later
+        else               dpfAlign(x, 16, 2, &p1, &p3, NULL);   // PF1 later
+    }
     uint32_t *planes = runAppend(MSG_HEADER(MSG_HIRES, row, 0, 0) | dpf, x, 16, 2);
     planes[0] = p1 | (uint32_t)p2 << 16;
     planes[1] = p3 | (uint32_t)p4 << 16;
@@ -407,6 +445,10 @@ void hostDirectLores(int row, int x, uint16_t p1, uint16_t p2, uint16_t p3,
                      uint16_t p4, uint16_t p5, uint16_t p6, int ham) {
     hostDirectSyncPalette();
     const uint32_t dpf = ham ? 0 : dpfBlockFlag(row);
+    if (dpf && dpf_delta) {
+        if (dpf_delta > 0) dpfAlign(x, 32, 1, &p2, &p4, &p6);    // PF2 later
+        else               dpfAlign(x, 32, 1, &p1, &p3, &p5);    // PF1 later
+    }
     uint32_t *planes =
         runAppend(MSG_HEADER(MSG_LORES, row, 0, ham ? 1 : 0) | dpf, x, 32, 3);
     planes[0] = p1 | (uint32_t)p2 << 16;

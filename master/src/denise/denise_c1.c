@@ -268,23 +268,28 @@ static void C1_FUNC(c1Record)(int y, int x0, int x1) {
 // (planes 1/3/5 -> PF1, colours 0-7; planes 2/4/6 -> PF2, colours 8-15),
 // each kept in a row buffer at its own scroll offset; they are combined by
 // priority when the row is flushed (before anything else touches it).
-static uint8_t dpf_pf1[DVI_DIRECT_IMAGE_WIDTH], dpf_pf2[DVI_DIRECT_IMAGE_WIDTH];
+static uint8_t dpf_buf[DVI_DIRECT_IMAGE_WIDTH];  // PF1 | PF2 << 3 per column
 static int dpf_y = -1, dpf_min, dpf_max;
 static int c1_dpf_delta;          // PF2 offset from PF1, image columns
 static bool c1_pf2pri;
 static void C1_FUNC(c1Record)(int y, int x0, int x1);
 
-// Colour numbers of a 6-bit DPF pixel: its playfields (0-7 each) and the
-// combined colour by priority (PF2PRI: 1 = PF2 in front).
-static uint8_t dpf_lut1[64], dpf_lut2[64], dpf_comp[2][64];
+// Colour numbers of a 6-bit DPF pixel: its playfields (PF1 in bits 0-2,
+// PF2 in bits 3-5 of the row buffer) and the colour of a buffer value by
+// priority (PF2PRI: 1 = PF2 in front); dpf_comp6 is the same for a raw
+// 6-bit pixel (same scroll, no buffer).
+static uint8_t dpf_lut1[64], dpf_lut2[64], dpf_comp[2][64], dpf_comp6[2][64];
 static void C1_FUNC(dpfTables)(void) {
     for (int v = 0; v < 64; ++v) {
         const uint8_t a = (uint8_t)((v & 1) | ((v >> 1) & 2) | ((v >> 2) & 4));
         const uint8_t b = (uint8_t)(((v >> 1) & 1) | ((v >> 2) & 2) | ((v >> 3) & 4));
         dpf_lut1[v] = a;
-        dpf_lut2[v] = b;
-        dpf_comp[0][v] = a ? a : (b ? (uint8_t)(8u + b) : 0);
-        dpf_comp[1][v] = b ? (uint8_t)(8u + b) : a;
+        dpf_lut2[v] = (uint8_t)(b << 3);
+        dpf_comp6[0][v] = a ? a : (b ? (uint8_t)(8u + b) : 0);
+        dpf_comp6[1][v] = b ? (uint8_t)(8u + b) : a;
+        const uint8_t pa = (uint8_t)(v & 7), pb = (uint8_t)(v >> 3);
+        dpf_comp[0][v] = pa ? pa : (pb ? (uint8_t)(8u + pb) : 0);
+        dpf_comp[1][v] = pb ? (uint8_t)(8u + pb) : pa;
     }
 }
 
@@ -297,13 +302,9 @@ static void __attribute__((noinline)) C1_FUNC(dpfFlush)(void) {
         return;
     uint8_t *line = c1_image + y * DVI_DIRECT_IMAGE_WIDTH;
     const uint8_t *comp = dpf_comp[c1_pf2pri];
-    for (int x = dpf_min; x < dpf_max; ++x) {
-        // Recombine the playfields into a 6-bit pixel for the table.
-        const uint8_t a = dpf_pf1[x], b = dpf_pf2[x];
-        line[x] = comp[(a & 1) | (b & 1) << 1 | (a & 2) << 1 | (b & 2) << 2 |
-                       (a & 4) << 2 | (b & 4) << 3];
-        dpf_pf1[x] = dpf_pf2[x] = 0;
-    }
+    for (int x = dpf_min; x < dpf_max; ++x)
+        line[x] = comp[dpf_buf[x]];
+    memset(dpf_buf + dpf_min, 0, (size_t)(dpf_max - dpf_min));
     const bool ham = c1_ham;
     c1_ham = false;
     c1Record(y, dpf_min, dpf_max);
@@ -337,7 +338,7 @@ static void C1_FUNC(dpfPlace)(int y, int image_x, const uint8_t *pixels,
         if (i1 <= i0)
             return;
         uint8_t *line = c1_image + y * DVI_DIRECT_IMAGE_WIDTH + image_x;
-        const uint8_t *comp = dpf_comp[c1_pf2pri];
+        const uint8_t *comp = dpf_comp6[c1_pf2pri];
         for (int i = i0; i < i1; ++i)
             line[i] = comp[pixels[i]];
         const bool ham = c1_ham;
@@ -354,16 +355,18 @@ static void C1_FUNC(dpfPlace)(int y, int image_x, const uint8_t *pixels,
     int i1;
     int i0 = dpfClip(image_x, width, &i1);
     if (i1 > i0) {
+        uint8_t *buf = dpf_buf + image_x;
         for (int i = i0; i < i1; ++i)
-            dpf_pf1[image_x + i] = dpf_lut1[pixels[i]];
+            buf[i] = (uint8_t)((buf[i] & 0x38u) | dpf_lut1[pixels[i]]);
         if (image_x + i0 < dpf_min) dpf_min = image_x + i0;
         if (image_x + i1 > dpf_max) dpf_max = image_x + i1;
     }
     const int x2 = image_x + c1_dpf_delta;
     i0 = dpfClip(x2, width, &i1);
     if (i1 > i0) {
+        uint8_t *buf = dpf_buf + x2;
         for (int i = i0; i < i1; ++i)
-            dpf_pf2[x2 + i] = dpf_lut2[pixels[i]];
+            buf[i] = (uint8_t)((buf[i] & 0x07u) | dpf_lut2[pixels[i]]);
         if (x2 + i0 < dpf_min) dpf_min = x2 + i0;
         if (x2 + i1 > dpf_max) dpf_max = x2 + i1;
     }
