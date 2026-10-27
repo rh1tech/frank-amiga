@@ -12,3 +12,4 @@ Local change: disk writes (DMA.c DSKLEN WRITE -> Floppy.c decodes AmigaDOS secto
 Local change: blitter end timing — blitter_execute() still computes a blit at once, but BBUSY/INTREQ BLIT come after an estimate of its real duration (DMA.c blitTime, state 3).
 Local change: Floppy.c re-arms an external drive's ID mode at every motor off (trackloaders identify DF1); motor on ends ID mode.
 Local change: m68kconf.h PICO PC-relative reads are masked with ADDRESS_68K (24-bit bus).
+Local change: Blitter.c line mode rewritten as the hardware steps it (A/B/C/D per pixel, error term in BLTAPT, SIGN, SUD/SUL/AUL, SING one-dot, texture rotation, registers left for chained lines).

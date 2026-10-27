@@ -128,8 +128,15 @@
 /* If ON, CPU will call the instruction hook callback before every
  * instruction.
  */
+#ifdef FRANK_PC_RING
+// frank-amiga debug build: every instruction's PC into a ring (main.c).
+#define M68K_INSTRUCTION_HOOK       OPT_SPECIFY_HANDLER
+#define M68K_INSTRUCTION_CALLBACK() frankPcRing(REG_PC)
+void frankPcRing(unsigned pc);
+#else
 #define M68K_INSTRUCTION_HOOK       OPT_OFF //OPT_SPECIFY_HANDLER // - Disabled if we don't need the disassembler
 #define M68K_INSTRUCTION_CALLBACK() cpu_instr_callback()
+#endif
 
 
 /* If ON, the CPU will emulate the 4-byte prefetch queue of a real 68000 */

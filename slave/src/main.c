@@ -163,6 +163,31 @@ static void sample_banks(void) {
     chip_bank_sample(a, w, n);
 }
 
+/* Kickstart's Alert (ROM 0xFC30A0..): the first one is recorded with its
+ * number (D7) and the caller's stack, for the console. */
+static volatile uint32_t alert_seen, alert_d7, alert_stack[8];
+void frankTraceException(unsigned vector, unsigned pc) {
+    pc &= 0xFFFFFFu;
+    if (alert_seen || vector != 8 || pc < 0xFC3000u || pc >= 0xFC3100u) return;
+    alert_d7 = m68k_get_reg(NULL, M68K_REG_D7);
+    const uint32_t sp = m68k_get_reg(NULL, M68K_REG_SP);
+    for (int i = 0; i < 8; i++) alert_stack[i] = m68k_read_memory_32(sp + 4u * (uint32_t)i);
+    alert_seen = 1;
+}
+
+#ifdef FRANK_PC_RING
+/* Debug: the last 256 instruction PCs, frozen when the CPU first enters
+ * Kickstart 1.3's LED-flashing dead end (0xFC3000..). */
+volatile uint32_t pc_ring[256], pc_ring_pos, pc_ring_frozen;
+void __not_in_flash_func(frankPcRing)(unsigned pc) {
+    if (pc_ring_frozen) return;
+    pc &= 0xFFFFFFu;
+    pc_ring[pc_ring_pos++ & 255u] = pc;
+    if (pc >= 0xFC3000u && pc < 0xFC3100u) pc_ring_frozen = 1;
+}
+
+#endif
+
 /* Joysticks (LINK_EV_JOY bits) by port. */
 static uint8_t joy_bits[2];
 static bool joy0_is_stick;
@@ -260,6 +285,13 @@ static void __not_in_flash_func(emulation_loop)(void) {
                    (unsigned long)hostAudioDrops, (unsigned long)chip_bank_swaps,
                    chipset.bplcon0, (unsigned long)host_dpf_rows, clxActive != 0, omegaDirectFirstLine, (unsigned long)m68k_get_reg(NULL, M68K_REG_PC));
             next_report = now + 2000000u;
+            if (alert_seen == 1) {
+                alert_seen = 2;
+                printf("ALERT %08lx, stack %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx\n",
+                       (unsigned long)alert_d7, (unsigned long)alert_stack[0], (unsigned long)alert_stack[1],
+                       (unsigned long)alert_stack[2], (unsigned long)alert_stack[3], (unsigned long)alert_stack[4],
+                       (unsigned long)alert_stack[5], (unsigned long)alert_stack[6], (unsigned long)alert_stack[7]);
+            }
 #ifdef DMA_SLOT_STATS
             extern uint32_t dma_stat_slow, dma_stat_batched, dma_stat_skipped;
             printf("slots/frame: slow %lu batched %lu skipped %lu\n",

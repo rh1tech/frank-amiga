@@ -178,264 +178,71 @@ void blitter_execute(Chipset_t* chipset){
         
 
         if(chipset->bltcon1 & 1){
-            //Line Mode
-            
-            //printf("Blitter Line Mode\n");
-            
-            int octCode = (chipset->bltcon1 >> 2) & 7;
-            int length = chipset->bltsizv;
-            int inc1 = chipset->bltamod; // 4(dy - dx)
-            int D = (int16_t)chipset->bltapt;// start value of 4dy - 2dx
-            
-            int planeAddr = chipset->bltcpt & 0x1FFFFE;//word address
-            
-            int planeMod  = chipset->bltcmod;
-            int inc2 = chipset->bltbmod;// 4dy
-            int d=0;
-            
-            int startPixel = chipset->bltcon0 >>12;
-            
-            int oneDot  = (chipset->bltcon1 >> 1) & 1;
-            int lastRow = -1;
-            
-            int minterm = chipset->bltcon0 & 255; //0xCA = normal 0x4A = XOR
-            
-            int patternShift = chipset->bltcon1 >>12;
-            uint16_t pattern = chipset->bltbdat;
-            
-            pattern = (pattern >> patternShift) | (pattern <<(16-patternShift));
-            
-            int addr=0;//running address
-            
-            //printf("Octant %d: dx - %d dy - %d @ 0x%06x\n",octCode,length,inc2/4,chipset->bltcpt);
-            
-            switch(octCode){
-                    
-                case 0:
-                    
-                    for(int i=0;i<length;++i){
-                        
-                        int offset = d+startPixel;
-                        addr = (planeAddr +(offset>>3)+(i*planeMod)) >> 1;
-
-                        if (!oneDot || i != lastRow) {
-                            lastRow = i;
-                            uint16_t pixel = CHIPW(addr);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            pixel = logicFunction(minterm,0x8000 >> (offset&15),pattern,pixel);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            CHIPW(addr) = pixel;
-                        }
-
-                        if(D>0){
-                            D = D + inc1;
-                            d = d + 1;
-                            
-                        }else{
-                            D = D + inc2;
-                        }
-                        
+            // frank-amiga: line mode stepped like the hardware (after
+            // WinUAE's blitter_line*): A is BLTADAT shifted by ASH, B one
+            // bit of the texture rotated per pixel, C read at the current
+            // address and D written there (the first pixel to BLTDPT). The
+            // error term lives in BLTAPT (A modulo when it is >= 0, B modulo
+            // when < 0, SIGN its start); SUD/SUL/AUL pick the octant and SING
+            // keeps one pixel per row (outlines for area fill). Pointers,
+            // error, ASH, texture and SIGN are left as the chip leaves them,
+            // so programs can chain lines.
+            const uint16_t con0 = chipset->bltcon0, con1 = chipset->bltcon1;
+            const int minterm = con0 & 0xFF;
+            const int sud = (con1 >> 4) & 1, sul = (con1 >> 3) & 1, aul = (con1 >> 2) & 1;
+            const int sing = (con1 >> 1) & 1;
+            const int32_t cmod = chipset->bltcmod;
+            const int16_t amod = chipset->bltamod, bmod = chipset->bltbmod;
+            int ashift = con0 >> 12;
+            int bshift = con1 >> 12;
+            uint16_t texture = chipset->bltbdat;
+            int16_t err = (int16_t)chipset->bltapt;
+            int sign = (con1 >> 6) & 1;
+            uint32_t cpt = chipset->bltcpt, dpt = chipset->bltdpt;
+            const uint16_t adat = chipset->bltadat & chipset->bltafwm;
+            int onedot = 0;
+            const int length = chipset->bltsizv;
+            for (int i = 0; i < length; ++i) {
+                const uint32_t ca = (cpt & 0x1FFFFE) >> 1;
+                uint16_t c = CHIPW(ca);
+                c = (uint16_t)(c << 8 | c >> 8);
+                const uint16_t a = adat >> ashift;
+                const uint16_t b = ((texture >> bshift) & 1) ? 0xFFFF : 0;
+                uint16_t dval = logicFunction(minterm, a, b, c);
+                const int draw = !sing || !onedot;
+                onedot++;
+                if (draw) {
+                    const uint32_t da = ((i == 0 ? dpt : cpt) & 0x1FFFFE) >> 1;
+                    CHIPW(da) = (uint16_t)(dval << 8 | dval >> 8);
+                }
+                dpt = cpt;
+                // Step: the error term and the minor axis when it is >= 0,
+                // then the major axis.
+                err = (int16_t)(err + (sign ? bmod : amod));
+                if (!sign) {
+                    if (sud) {
+                        if (sul) { cpt -= cmod; } else { cpt += cmod; }
+                        onedot = 0;
+                    } else {
+                        if (sul) { if (ashift-- == 0) { ashift = 15; cpt -= 2; } }
+                        else     { if (++ashift == 16) { ashift = 0; cpt += 2; } }
                     }
-                    break;
-                    
-                case 1:
-                    for(int i=0;i<length;++i){
-                        
-                        int offset = d+startPixel;
-                        addr =(planeAddr +(offset>>3)-(i*planeMod)) >> 1;
-
-                        if (!oneDot || i != lastRow) {
-                            lastRow = i;
-                            uint16_t pixel = CHIPW(addr);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            pixel = logicFunction(minterm,0x8000 >> (offset&15),pattern,pixel);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            CHIPW(addr) = pixel;
-                        }
-
-                        if(D>0){
-                            D = D + inc1;
-                            d = d + 1;
-
-                        }else{
-                            D = D + inc2;
-                        }
-
-                    }
-                    break;
-
-                case 2:
-                    startPixel = 15 - startPixel;
-                    planeAddr +=1;
-                    for(int i=0;i<length;++i){
-
-                        int offset = d+startPixel;
-                        addr = (planeAddr - (offset>>3)+(i*planeMod))>>1;
-
-                        if (!oneDot || i != lastRow) {
-                            lastRow = i;
-                            uint16_t pixel = CHIPW(addr);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            pixel = logicFunction(minterm,0x0001 << (offset&15),pattern,pixel);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            CHIPW(addr) = pixel;
-                        }
-
-                        if(D>0){
-                            D = D + inc1;
-                            d = d + 1;
-
-                        }else{
-                            D = D + inc2;
-                        }
-
-                    }
-                    break;
-                    
-                case 3:
-
-                    for(int i=0;i<length;++i){
-
-                        int offset =d+startPixel;
-                        addr =(planeAddr +(offset>>3)-(i*planeMod))>>1;
-
-                        if (!oneDot || i != lastRow) {
-                            lastRow = i;
-                            uint16_t pixel = CHIPW(addr);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            pixel = logicFunction(minterm,0x8000 >> (offset&15),pattern,pixel);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            CHIPW(addr) = pixel;
-                        }
-
-                        if(D>0){
-                            D = D + inc1;
-                            d = d - 1;
-
-                        }else{
-                            D = D + inc2;
-                        }
-
-                    }
-                    break;
-                    
-                case 4:
-                    for(int i=0;i<length;++i){
-
-                        int offset = i+startPixel;
-                        addr =(planeAddr +(offset>>3)+(d*planeMod))>>1;
-
-                        if (!oneDot || d != lastRow) {
-                            lastRow = d;
-                            uint16_t pixel = CHIPW(addr);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            pixel = logicFunction(minterm,0x8000 >> (offset&15),pattern,pixel);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            CHIPW(addr) = pixel;
-                        }
-
-                        if(D>0){
-                            D = D + inc1;
-                            d = d + 1;
-
-                        }else{
-                            D = D + inc2;
-                        }
-
-                    }
-                    break;
-                    
-                case 5:
-                    startPixel = 15 - startPixel;
-                    planeAddr +=1;
-                    for(int i=0;i<length;++i){
-
-                        int offset = i+startPixel;
-                        addr = (planeAddr - (offset>>3)+(d*planeMod))>>1;
-
-                        if (!oneDot || d != lastRow) {
-                            lastRow = d;
-                            uint16_t pixel = CHIPW(addr);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            pixel = logicFunction(minterm,0x0001 << (offset&15),pattern,pixel);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            CHIPW(addr) = pixel;
-                        }
-
-                        if(D>0){
-                            D = D + inc1;
-                            d = d + 1;
-
-                        }else{
-                            D = D + inc2;
-                        }
-
-                    }
-                    break;
-                    
-                case 6:
-                    for(int i=0;i<length;++i){
-
-                        int offset = i+startPixel;
-                        addr =(planeAddr +(offset>>3)-(d*planeMod))>>1;
-
-                        if (!oneDot || d != lastRow) {
-                            lastRow = d;
-                            uint16_t pixel = CHIPW(addr);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            pixel = logicFunction(minterm,0x8000 >> (offset&15),pattern,pixel);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            CHIPW(addr) = pixel;
-                        }
-
-                        if(D>0){
-                            D = D + inc1;
-                            d = d + 1;
-
-                        }else{
-                            D = D + inc2;
-                        }
-
-                    }
-                    break;
-                    
-                case 7:
-                    startPixel = 15 - startPixel;
-                    planeAddr +=1;
-                    for(int i=0;i<length;++i){
-
-                        int offset = i+startPixel;
-                        addr = (planeAddr - (offset>>3)-(d*planeMod))>>1;
-
-                        if (!oneDot || d != lastRow) {
-                            lastRow = d;
-                            uint16_t pixel = CHIPW(addr);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            pixel = logicFunction(minterm,0x0001 << (offset&15),pattern,pixel);
-                            pixel = (pixel <<8) | (pixel >>8);
-                            CHIPW(addr) = pixel;
-                        }
-
-                        if(D>0){
-                            D = D + inc1;
-                            d = d + 1;
-
-                        }else{
-                            D = D + inc2;
-                        }
-
-                    }
-                    break;
-                    
-                default:
-                    break;
-                    
+                }
+                if (sud) {
+                    if (aul) { if (ashift-- == 0) { ashift = 15; cpt -= 2; } }
+                    else     { if (++ashift == 16) { ashift = 0; cpt += 2; } }
+                } else {
+                    if (aul) { cpt -= cmod; } else { cpt += cmod; }
+                    onedot = 0;
+                }
+                sign = err < 0;
+                bshift = (bshift - 1) & 15;   // the texture's next bit
             }
-            
-            
-            chipset->bltcpt =addr;  // update cpt with the last known address... nothing should rely on this...
-            //chipset->bltapt = D;    // update apt with the last known address... nothing should rely on this...
-            
+            chipset->bltcpt = cpt;
+            chipset->bltdpt = dpt;
+            chipset->bltapt = (chipset->bltapt & 0xFFFF0000u) | (uint16_t)err;
+            chipset->bltcon0 = (uint16_t)((con0 & 0x0FFF) | (ashift << 12));
+            chipset->bltcon1 = (uint16_t)((con1 & 0x0FBF) | (bshift << 12) | (sign << 6));
             chipset->bltsizh = 0; // all done;
             chipset->bltsizv = 0; // all done;
             blitterFinished();   // frank-amiga: busy/interrupt when its time is up (DMA.c)

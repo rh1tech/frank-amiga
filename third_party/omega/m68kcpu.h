@@ -1754,6 +1754,9 @@ void m68ki_stack_frame_1011(uint sr, uint vector, uint pc)
  */
 INLINE void m68ki_exception_trap(uint vector)
 {
+#ifdef FRANK_TRACE_EXCEPTIONS
+	{ extern void frankTraceException(unsigned vector, unsigned pc); frankTraceException(vector, REG_PPC); }
+#endif
 	uint sr = m68ki_init_exception();
 
 	if(CPU_TYPE_IS_010_LESS(CPU_TYPE))
@@ -1770,6 +1773,9 @@ INLINE void m68ki_exception_trap(uint vector)
 /* Trap#n stacks a 0 frame but behaves like group2 otherwise */
 INLINE void m68ki_exception_trapN(uint vector)
 {
+#ifdef FRANK_TRACE_EXCEPTIONS
+	{ extern void frankTraceException(unsigned vector, unsigned pc); frankTraceException(vector, REG_PPC); }
+#endif
 	uint sr = m68ki_init_exception();
 	m68ki_stack_frame_0000(REG_PC, sr, vector);
 	m68ki_jump_vector(vector);
@@ -1808,6 +1814,9 @@ INLINE void m68ki_exception_trace(void)
 /* Exception for privilege violation */
 INLINE void m68ki_exception_privilege_violation(void)
 {
+#ifdef FRANK_TRACE_EXCEPTIONS
+	{ extern void frankTraceException(unsigned vector, unsigned pc); frankTraceException(8, REG_PPC); }
+#endif
 	uint sr = m68ki_init_exception();
 
 	#if M68K_EMULATE_ADDRESS_ERROR == OPT_ON
@@ -1827,6 +1836,9 @@ INLINE void m68ki_exception_privilege_violation(void)
 /* Exception for A-Line instructions */
 INLINE void m68ki_exception_1010(void)
 {
+#ifdef FRANK_TRACE_EXCEPTIONS
+	{ extern void frankTraceException(unsigned vector, unsigned pc); frankTraceException(10, REG_PPC); }
+#endif
 	uint sr;
 #if M68K_LOG_1010_1111 == OPT_ON
 	M68K_DO_LOG_EMU((M68K_LOG_FILEHANDLE "%s at %08x: called 1010 instruction %04x (%s)\n",
@@ -1845,6 +1857,9 @@ INLINE void m68ki_exception_1010(void)
 /* Exception for F-Line instructions */
 INLINE void m68ki_exception_1111(void)
 {
+#ifdef FRANK_TRACE_EXCEPTIONS
+	{ extern void frankTraceException(unsigned vector, unsigned pc); frankTraceException(11, REG_PPC); }
+#endif
 	uint sr;
 
 #if M68K_LOG_1010_1111 == OPT_ON
@@ -1864,6 +1879,9 @@ INLINE void m68ki_exception_1111(void)
 /* Exception for illegal instructions */
 INLINE void m68ki_exception_illegal(void)
 {
+#ifdef FRANK_TRACE_EXCEPTIONS
+	{ extern void frankTraceException(unsigned vector, unsigned pc); frankTraceException(4, REG_PPC); }
+#endif
 	uint sr;
 
 	M68K_DO_LOG((M68K_LOG_FILEHANDLE "%s at %08x: illegal instruction %04x (%s)\n",
@@ -1889,6 +1907,9 @@ INLINE void m68ki_exception_illegal(void)
 /* Exception for format errror in RTE */
 INLINE void m68ki_exception_format_error(void)
 {
+#ifdef FRANK_TRACE_EXCEPTIONS
+	{ extern void frankTraceException(unsigned vector, unsigned pc); frankTraceException(14, REG_PPC); }
+#endif
 	uint sr = m68ki_init_exception();
 	m68ki_stack_frame_0000(REG_PC, sr, EXCEPTION_FORMAT_ERROR);
 	m68ki_jump_vector(EXCEPTION_FORMAT_ERROR);
@@ -1900,6 +1921,9 @@ INLINE void m68ki_exception_format_error(void)
 /* Exception for address error */
 INLINE void m68ki_exception_address_error(void)
 {
+#ifdef FRANK_TRACE_EXCEPTIONS
+	{ extern void frankTraceException(unsigned vector, unsigned pc); frankTraceException(3, REG_PPC); }
+#endif
 	uint sr = m68ki_init_exception();
 
 	/* If we were processing a bus error, address error, or reset,

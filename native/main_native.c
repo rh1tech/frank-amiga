@@ -115,6 +115,14 @@ static int load_rom_file(const char *path) {
     return 0;
 }
 
+#ifdef FRANK_TRACE_EXCEPTIONS
+extern unsigned long native_frame_counter;
+void frankTraceException(unsigned vector, unsigned pc) {
+    if (vector >= 32 && vector < 48) return;   /* TRAP #n: routine */
+    printf("  vbl=%lu EXCEPTION vector %u at pc %06x\n", native_frame_counter, vector, pc & 0xffffff);
+    fflush(stdout);
+}
+#endif
 int main(int argc, char **argv) {
     const char  *adfPath   = (argc > 1) ? argv[1] : NULL;
     long         iterations = (argc > 2) ? strtol(argv[2], NULL, 0) : 40000;
@@ -275,6 +283,35 @@ int main(int argc, char **argv) {
         }
 #endif
 
+#ifdef FRANK_TRACE_EXCEPTIONS
+        {   // Kickstart 1.3's dead-end Alert code (LED flashing): report once.
+            static int alerted;
+            const unsigned pc = m68k_get_reg(NULL, M68K_REG_PC) & 0xffffff;
+            static unsigned lastRamPc; static int left;
+            if (native_frame_counter > 20000 && !left) {
+                if (pc < 0xf80000) lastRamPc = pc;
+                else if (lastRamPc) {
+                    left = 1;
+                    printf("  vbl=%lu LEFT RAM: last ram pc %06x -> rom pc %06x D7=%08x A7=%08x SR=%04x\n",
+                           native_frame_counter, lastRamPc, pc, m68k_get_reg(NULL, M68K_REG_D7),
+                           m68k_get_reg(NULL, M68K_REG_SP), m68k_get_reg(NULL, M68K_REG_SR));
+                    const unsigned sp = m68k_get_reg(NULL, M68K_REG_SP);
+                    for (int k = 0; k < 12; k++) printf("%08x ", native_read_u32(sp + 4 * k));
+                    printf("\n");
+                }
+            }
+            if (!alerted && pc >= 0xfc3000 && pc < 0xfc3100) {
+                alerted = 1;
+                printf("  vbl=%lu ALERT pc %06x D7=%08x D0=%08x A5=%08x A6=%08x SP=%08x\n",
+                       native_frame_counter, pc, m68k_get_reg(NULL, M68K_REG_D7),
+                       m68k_get_reg(NULL, M68K_REG_D0), m68k_get_reg(NULL, M68K_REG_A5),
+                       m68k_get_reg(NULL, M68K_REG_A6), m68k_get_reg(NULL, M68K_REG_SP));
+                const unsigned sp = m68k_get_reg(NULL, M68K_REG_SP);
+                for (int k = 0; k < 16; k++) printf("%08x ", native_read_u32(sp + 4 * k));
+                printf("\n");
+            }
+        }
+#endif
         // KickSmash "Switch and Reboot": the bank's ROM, then a reset, as
         // the board does (between slices, once the reply was read).
         {
