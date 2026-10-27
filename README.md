@@ -19,6 +19,11 @@ python3 tools/uart.py master send "help\r" --until "^OK"
 
 Bench instruments (probes, chip IDs, capture devices) are in `tools/bench.conf`.
 
+Testing: `tools/native_regress.sh out.txt` hashes native frames (compare two
+runs to prove a change neutral); `tools/hw_suite.sh` boots each demo of the SD
+card's test set on the board and reports fps, last PC and hang/reset flags
+(`tools/hw_triage.sh disk.adf` for one).
+
 ## microSD layout
 
 ```

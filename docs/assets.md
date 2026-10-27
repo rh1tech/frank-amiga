@@ -7,6 +7,8 @@
   (`tools/scene_org.py get mirrors/amigascne/Groups/...`), DMS converted with
   xdms 1.3.2 (Debian source): Spaceballs State of the Art / 9 Fingers,
   Kefrens Desert Dream, Phenomena Enigma, Crionics Hardwired, Sanity
-  Interference / Arte.
+  Interference / Arte, Kefrens Megademo VIII / Psychoball / Desert Dream B,
+  Scoopex Mental Hangover, Andromeda Mind Riot, Sanity Turmoil / Hospital
+  Since Friday.
 
 Kickstart and commercial games come from the user's own licensed copies.
