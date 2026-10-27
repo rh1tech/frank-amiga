@@ -154,6 +154,7 @@ unsigned int chipReadByte(unsigned int address){
     
     //Chipregs
     if(address>0xDFEFFF){
+        DMA_CATCH_UP();
         address = (address & 0x1FF);
         debugChipAddress = address;
         if (address >= 32)
@@ -173,6 +174,7 @@ unsigned int chipReadByte(unsigned int address){
         return inCustomMirror(address) ? chipReadByte(customMirror(address)) : 0;
     }
     
+    if(address>=0xBFD000 && address<0xC00000) DMA_CATCH_UP();
     //CIA A
     if(address>=0xBFE001){
         address = (address - 0xBFE001) >> 8;
@@ -240,6 +242,7 @@ unsigned int chipReadWord(unsigned int address){
     
     //Chipregs
     if(address>0xDFEFFF){
+        DMA_CATCH_UP();
         address = (address & 0x1FF) >> 1;
         
         if(address>16){
@@ -269,6 +272,7 @@ unsigned int chipReadWord(unsigned int address){
         return inCustomMirror(address) ? chipReadWord(customMirror(address)) : 0;
     }
     
+    if(address>=0xBFD000 && address<0xC00000) DMA_CATCH_UP();
     //CIA A
     if(address>=0xBFE001){
         address = (address - 0xBFE001) >> 8;
@@ -334,6 +338,7 @@ unsigned int chipReadLong(unsigned int address){
     
     //Chipregs
     if(address>0xDFEFFF){
+        DMA_CATCH_UP();
         address = (address & 0x1FF) >> 1;
         // getChipReg32 covers only the first 16 registers; everything else
         // reads 0 like its noReadL entries (as src/Memory.c).
@@ -355,6 +360,7 @@ unsigned int chipReadLong(unsigned int address){
         return inCustomMirror(address) ? chipReadLong(customMirror(address)) : 0;
     }
     
+    if(address>=0xBFD000 && address<0xC00000) DMA_CATCH_UP();
     //CIA A
     if(address>=0xBFE001){
         address = (address - 0xBFE001) >> 8;
@@ -453,6 +459,7 @@ void chipWriteByte(unsigned int address,unsigned int value){
     // The 68000 drives a byte on both halves of the data bus and the custom
     // chips latch the whole word: the register gets the byte twice.
     if(address>0xDFEFFF){
+        DMA_CATCH_UP();
         chipWriteWord(address & ~1u, (value & 0xFFu) * 0x0101u);
         return;
     }
@@ -471,6 +478,7 @@ void chipWriteByte(unsigned int address,unsigned int value){
         return;
     }
     
+    if(address>=0xBFD000 && address<0xC00000) DMA_CATCH_UP();
     //CIA A
     if(address>=0xBFE001){
         address = (address - 0xBFE001) >> 8;
@@ -589,6 +597,7 @@ void chipWriteWord(unsigned int address,unsigned int value){
     
     //Chipregs
     if(address>0xDFEFFF){
+        DMA_CATCH_UP();
         address = (address & 0x1FF) >> 1;
         
         debugChipAddress = address;    // used for debugging to identify the register being called
@@ -611,6 +620,7 @@ void chipWriteWord(unsigned int address,unsigned int value){
         return;
     }
     
+    if(address>=0xBFD000 && address<0xC00000) DMA_CATCH_UP();
     //CIA A
     if(address>=0xBFE001){
         return;
@@ -741,6 +751,7 @@ void chipWriteLong(unsigned int address,unsigned int value){
 
     //Chipregs
     if(address>0xDFEFFF){
+        DMA_CATCH_UP();
         // A 68020 long write is two adjacent custom-register word writes.
         // The old 32-bit dispatch table contains mostly no-op placeholders,
         // which discarded common writes such as BPLxPTH/BPLxPTL pairs.
@@ -762,6 +773,7 @@ void chipWriteLong(unsigned int address,unsigned int value){
         return;
     }
     
+    if(address>=0xBFD000 && address<0xC00000) DMA_CATCH_UP();
     //CIA A
     if(address>=0xBFE001){
         return;

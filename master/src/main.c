@@ -255,6 +255,12 @@ static void cmd_fluxdump(int argc, char **argv) {
            (unsigned long)(timing & 0xFFFFu), (unsigned long)(timing >> 16));
 }
 
+/* scpraw <drive> <track>: bench, the track's raw SCP block to PSRAM 0x7C0000. */
+static void cmd_scpraw(int argc, char **argv) {
+    if (argc < 3) return;
+    printf("scpraw %lu bytes at 0x157C0000\n", (unsigned long)media_scp_raw(atoi(argv[1]), atoi(argv[2])));
+}
+
 /* usb: what the USB host sees. */
 static void cmd_usb(int argc, char **argv) {
     (void)argc; (void)argv;
@@ -394,6 +400,7 @@ static const console_cmd_t cmds[] = {
     { "key",    cmd_key,    "key <hex> [up|down|tap]: Amiga raw keycode" },
     { "mouse",  cmd_mouse,  "mouse <dx> <dy> [buttons]" },
     { "state",  cmd_state,  "state save|load: savestate (slave PSRAM)" },
+    { "scpraw", cmd_scpraw, "scpraw <drive> <track>: bench, raw SCP track to PSRAM 0x7C0000" },
     { "fluxdump", cmd_fluxdump, "fluxdump <drive> <track>|all: bench, MFM tracks into the cache" },
     { "usb",    cmd_usb,    "usb: connected keyboard, mouse, gamepads" },
     { "mem",    cmd_mem,    "mem <chip KB> <slow KB>: RAM (512/1024/2048, 0/512/1024), cold-start" },

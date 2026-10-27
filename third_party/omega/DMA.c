@@ -13,6 +13,7 @@
 //  with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "DMA.h"
+#include "m68k.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include "Memory.h"
@@ -1308,6 +1309,55 @@ void dma_execute(){
     dma_run(1);
 }
 
+// frank-amiga: catch-up scheduling. A slice lets the CPU run first, for as
+// long as nothing it could notice happens in the chipset: up to the Copper's
+// or the blitter's next action (dmaIdleUntil()), at most 64 slots and never
+// past the end of the line; at least 8 slots, as before, when they are
+// busy. Every CPU access to a custom or CIA register first runs the
+// chipset up to the CPU's cycle (dmaCatchUp()), so the CPU sees and moves
+// the chipset at its own time, and the rest of the slice runs afterwards.
+// Batching the slots this way saves the per-call cost of alternating
+// dma_run() and m68k_execute() every 8 slots.
+#ifndef OMEGA_CPU_CYCLES_PER_SLOT
+#define OMEGA_CPU_CYCLES_PER_SLOT 2
+#endif
+int dmaInCpu, dmaInCatchUp;
+static int dmaSliceSlots, dmaCaught;
+
+void dmaCatchUp(void) {
+    int due = m68k_cycles_run() / OMEGA_CPU_CYCLES_PER_SLOT;
+    // The slice's last slot stays for afterwards: the end of the line (and
+    // of the frame) never runs inside an instruction.
+    if (due > dmaSliceSlots - 1) due = dmaSliceSlots - 1;
+    due -= dmaCaught;
+    if (due <= 0) return;
+    dmaInCatchUp = 1;
+    dma_run(due);
+    dmaInCatchUp = 0;
+    dmaCaught += due;
+}
+
+int dmaRunSlice(int *cpuBalance) {
+    const int h = internal.hPos;
+    const int toLineEnd = lineLast + 1 - h;
+    int n = (toLineEnd < 64 ? toLineEnd : 64);
+    if (dmaLineStateDirty)
+        dmaUpdateLineState();
+    n = dmaIdleUntil(h + n) - h;
+    if (n < 8) n = toLineEnd < 8 ? toLineEnd : 8;
+    dmaSliceSlots = n;
+    dmaCaught = 0;
+    *cpuBalance += OMEGA_CPU_CYCLES_PER_SLOT * n;
+    if (*cpuBalance > 0) {
+        dmaInCpu = 1;
+        *cpuBalance -= m68k_execute(*cpuBalance);
+        dmaInCpu = 0;
+    }
+    if (dmaCaught < n)
+        dma_run(n - dmaCaught);
+    return n;
+}
+
 
 // Copper WAIT comparison (copperExecute() state 3).
 // The Copper compares only the low 8 bits of the beam line (VP7-VP0), as on
@@ -1498,6 +1548,10 @@ void diskCycle(void){
 
             if (!floppyDataReady())
                 return;     // frank-amiga: flux track still on its way
+            // frank-amiga: a sync word that cannot come (no drive or no disk
+            // at the selected port) is not searched for in endless zeros.
+            if (!floppySync && (chipset.adkconr & 0x400) && !floppyHasMedia())
+                return;
 
             // frank-amiga: without ADKCON WORDSYNC the transfer starts at
             // once instead of at the next sync word.

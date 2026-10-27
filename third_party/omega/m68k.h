@@ -303,6 +303,7 @@ void m68k_end_timeslice(void);          /* End timeslice now */
  * Setting IRQ to 0 will clear an interrupt request.
  */
 void m68k_set_irq(unsigned int int_level);
+void m68k_set_irq_deferred(unsigned int int_level);   /* frank-amiga */
 
 
 /* Halt the CPU as if you pulsed the HALT pin. */

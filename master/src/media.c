@@ -322,6 +322,12 @@ uint32_t media_flux_dump(int drive, int track, uint32_t *timing) {
     return n;
 }
 
+/* Bench: a track's raw SCP block into master PSRAM 0x7C0000 (256 KB). */
+uint32_t media_scp_raw(int drive, int track) {
+    if (drive < 0 || drive > 1 || !scp[drive].open) return 0;
+    return scp_raw_track(&scp[drive], track, (uint8_t *)(0x11000000u + 0x7C0000u), 0x40000u);
+}
+
 /* The slave's flux-image drive wants a track: send it. */
 static void serve_tracks(void) {
     for (int guard = 0; guard < 2; guard++) {

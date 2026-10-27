@@ -508,6 +508,13 @@ void floppyTrackLoaded(int drive, int track, uint32_t len, const uint16_t *cells
 // A flux drive whose track has not arrived yet holds disk DMA back (the
 // words would be gaps, and a loader that started its read at once would get
 // a broken track and retry forever); the disk just reaches the data later.
+// No drive at the port, or no disk in it: no bits come off it.
+static int drive_connected[4];
+int floppyHasMedia(void) {
+    const int d = driveSelected;
+    return d < 4 && drive_connected[d] && df[d].hasDisk;
+}
+
 int floppyDataReady(void) {
     const int d = driveSelected;
     return d >= FLOPPY_DISK_DRIVES || !ext_mode[d] || !df[d].hasDisk ||
@@ -627,6 +634,7 @@ void floppyWriteDone(void) {
 #else
 static int drive_connected[4] = { 1, 0, 0, 0 };
 int floppyDataReady(void) { return 1; }
+int floppyHasMedia(void) { return driveSelected == 0 && df[0].hasDisk; }
 void floppyWriteByte(uint8_t b) { (void)b; }
 void floppyWriteDone(void) {}
 void floppyWriteAbort(void) {}

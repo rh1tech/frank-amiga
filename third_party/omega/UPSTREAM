@@ -21,3 +21,5 @@ Local change: Floppy.c floppySetState() — every selected drive takes motor/ste
 Local change: m68kconf.h M68K_EMULATE_TRACE on (Rob Northen Copylock decrypts itself from the trace handler).
 Local change: DMA.c disk DMA finds DSKSYNC at any bit position and keeps that word alignment; Chipset.c DSKLEN restarts the sync search.
 Local change: Floppy.c timed tracks (flux images with a cell-length table): real-speed rotation, DSKSYNC without DMA, DSKBYTR (WORDEQUAL, BYTEREADY, data byte; byte reads wired in Chipset.c).
+Local change: catch-up scheduling — DMA.c dmaRunSlice()/dmaCatchUp(): the CPU runs a slice first (up to the Copper/blitter horizon, the line end, 64 slots), custom/CIA register accesses bring the chipset up to its cycle; CPU.c raises interrupts found during a catch-up at the next instruction boundary (m68kcpu.c m68k_set_irq_deferred); m68k_end_timeslice() returns the cycles run.
+Local change: DMA.c disk DMA does not search for a sync word that cannot come (no drive or no disk at the selected port).

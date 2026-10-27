@@ -154,6 +154,15 @@ void cpu_execute(){
 
 
 
+// frank-amiga: while the chipset catches up with the CPU inside an
+// instruction (DMA.c dmaCatchUp()), a new level waits for the instruction's
+// end.
+extern int dmaInCatchUp;
+static inline void setIrq(unsigned int level){
+    if (dmaInCatchUp) m68k_set_irq_deferred(level);
+    else m68k_set_irq(level);
+}
+
 void checkInterrupt(Chipset_t* chipset){
     
     if(chipset->intenar & 0x4000){ // if master interrupt switch is enabled
@@ -165,41 +174,41 @@ void checkInterrupt(Chipset_t* chipset){
             m68k_end_timeslice();
             
             if(intMask & 8192){  // External int
-                m68k_set_irq(6);
+                setIrq(6);
             }else if(intMask & 4096){ // Disk sync
-                m68k_set_irq(5);
+                setIrq(5);
             }else if(intMask & 2048){ // Serial receive buffer full
-                m68k_set_irq(5);
+                setIrq(5);
             }else if(intMask & 1024){ // Audio 3
-                m68k_set_irq(4);
+                setIrq(4);
             }else if(intMask & 512){  // Audio 2
-                m68k_set_irq(4);
+                setIrq(4);
             }else if(intMask & 256){  // Audio 1
-                m68k_set_irq(4);
+                setIrq(4);
             }else if(intMask & 128){  // Audio 0
-                m68k_set_irq(4);
+                setIrq(4);
             }else if(intMask & 64){   // Blitter finished
-                m68k_set_irq(3);
+                setIrq(3);
             }else if(intMask & 32){   // VBL
-                m68k_set_irq(3);
+                setIrq(3);
             }else if(intMask & 16){   // Copper
-                m68k_set_irq(3);
+                setIrq(3);
             }else if(intMask & 8){    // Ports, IO and timers
-                m68k_set_irq(2);
+                setIrq(2);
             }else if(intMask & 4){    // Software int
-                m68k_set_irq(1);
+                setIrq(1);
             }else if(intMask & 2){    // Disk block finished
-                m68k_set_irq(1);
+                setIrq(1);
             }else if(intMask & 1){    // Serial Transmit buffer empty
-                m68k_set_irq(1);
+                setIrq(1);
             }
             
         }else{
-            m68k_set_irq(0);    // no interupt pending
+            setIrq(0);    // no interupt pending
         }
         
     }else{
-        m68k_set_irq(0);    // no interupt if master INT disabled
+        setIrq(0);    // no interupt if master INT disabled
     }
     
 }

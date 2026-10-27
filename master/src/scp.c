@@ -9,9 +9,8 @@
  * zero bits and a one. When the slave's drive reaches a track, its first
  * revolution is turned into bits with a simple clock that follows the
  * disk's speed and sent as raw MFM (link_proto.h TRACKDATA), so any format
- * works, AmigaDOS or a game's own. Omega's disk DMA finds sync words on word
- * boundaries only, so the track starts with a sync: the one after its gap
- * (everything one DMA write laid down keeps that alignment).
+ * works, AmigaDOS or a game's own. The track starts at the index, as on
+ * the disk; the slave's disk DMA finds sync words at any bit position.
  */
 #include "scp.h"
 
@@ -58,9 +57,6 @@ void scp_close(scp_t *s) {
 static uint8_t *const flux_now = (uint8_t *)(0x11000000u + 0x740000u);
 static uint8_t *const flux_bg = (uint8_t *)(0x11000000u + 0x780000u);
 
-/* Bits of `out`, most significant first. */
-static inline int bit_at(const uint8_t *b, uint32_t i) { return (b[i >> 3] >> (7 - (i & 7))) & 1; }
-
 /* A track's header: where its first revolution's flux is, and how long. */
 static bool track_flux(scp_t *s, int track, uint32_t *at, uint32_t *bytes) {
     if (!s->open || track < 0 || track >= SCP_TRACKS || !s->offset[track]) return false;
@@ -76,10 +72,8 @@ static bool track_flux(scp_t *s, int track, uint32_t *at, uint32_t *bytes) {
     return true;
 }
 
-/* `flux` is free once read, and serves as scratch for the track's bits. */
-static uint32_t flux_to_mfm(const scp_t *s, uint8_t *flux, uint32_t len,
+static uint32_t flux_to_mfm(const scp_t *s, const uint8_t *flux, uint32_t len,
                             uint8_t *out, uint32_t cap, scp_cells_t *cells) {
-    uint8_t *const scratch = flux;
     static uint32_t block_ticks[SCP_CELL_BLOCKS];   /* ticks * 16 per 256 bits */
     memset(block_ticks, 0, sizeof block_ticks);
     /* Flux to bits. The bit cell in ticks * 16 follows the disk's speed
@@ -106,37 +100,12 @@ static uint32_t flux_to_mfm(const scp_t *s, uint8_t *flux, uint32_t len,
         if (((nbits - 1) >> 8) < SCP_CELL_BLOCKS) block_ticks[(nbits - 1) >> 8] += (uint32_t)ticks16;
     }
 
-    /* Where the track starts: at the sync after its longest stretch without
-     * one, the gap the writes of a track end in. The revolution is a circle,
-     * so the bits before that sync follow at the end, in order. A track is a
-     * whole number of 32-bit words: the bits beyond are taken out 64 bytes
-     * before the end, inside the gap, where a splice does no harm (cut right
-     * before the sync, an odd count turned the gap's AAAA filler into 5555
-     * against the sync, and Kickstart's bit-level search missed the sync). */
-    uint32_t sr = 0, first = UINT32_MAX, last_sync = 0, last_mark = 0, start = 0, best = 0;
-    for (uint32_t i = 0; i < nbits; i++) {
-        sr = (sr << 1 | (uint32_t)bit_at(out, i)) & 0xFFFFu;
-        if (i < 15 || sr != 0x4489u) continue;
-        const uint32_t at = i - 15;
-        if (first != UINT32_MAX && at - last_sync < 64u) {   /* 4489 4489: one mark */
-            last_sync = at;
-            continue;
-        }
-        if (first == UINT32_MAX) first = at;
-        else if (at - last_mark > best) { best = at - last_mark; start = at; }
-        last_mark = last_sync = at;
-    }
-    if (first != UINT32_MAX && first + nbits - last_mark > best) start = first;
-
-    const uint32_t extra = nbits % 32u, total = nbits - extra;
-    const uint32_t cut = total > 1024u ? total - 512u : total;
-    uint32_t acc = 0, n = 0, o = 0, src = start;
-    for (uint32_t k = 0; k < nbits; k++, src = src + 1u == nbits ? 0u : src + 1u) {
-        if (k >= cut && k < cut + extra) continue;
-        acc = acc << 1 | (uint32_t)bit_at(out, src);
-        if (++n == 8u) { scratch[o++] = (uint8_t)acc; acc = 0; n = 0; }
-    }
-    memcpy(out, scratch, o);
+    /* The track as the drive delivers it: from the index on, so a program
+     * timing from a sync to the index pulse (Rob Northen Copylock does)
+     * sees the real distance. Disk DMA finds syncs at any bit. A track is a
+     * whole number of 32-bit words: the bits beyond go at its very end, just
+     * before the index, where the track's write splice is. */
+    const uint32_t o = (nbits - nbits % 32u) / 8u;
 
     /* The cells' timing, per 256-bit block of the track as sent (whole
      * blocks of the revolution only; the last, partial one is left out). */
@@ -154,8 +123,7 @@ static uint32_t flux_to_mfm(const scp_t *s, uint8_t *flux, uint32_t len,
     if (spread > SCP_TIMED_PERMILLE && blocks) {
         const uint32_t out_blocks = (o * 8u + 255u) >> 8;
         for (uint32_t j = 0; j < out_blocks && j < SCP_CELL_BLOCKS; j++) {
-            const uint32_t sb = ((start + j * 256u + 128u) % nbits) >> 8;
-            const uint32_t t = block_ticks[sb < blocks ? sb : blocks - 1u];
+            const uint32_t t = block_ticks[j < blocks ? j : blocks - 1u];
             cells->ns[j] = (uint16_t)((uint64_t)t * s->ticks_ns / (16u * 256u));
         }
         cells->n = (uint16_t)(out_blocks < SCP_CELL_BLOCKS ? out_blocks : SCP_CELL_BLOCKS);
@@ -198,4 +166,18 @@ uint32_t scp_bg_step(scp_t *s, uint32_t slice, uint8_t *out, uint32_t cap, scp_c
     }
     s->bg_track = -1;
     return flux_to_mfm(s, flux_bg, s->bg_len, out, cap, cells);
+}
+
+/* Bench: a track's raw block (TRK header, first revolution's entry, its
+ * flux) into `dst`; returns the bytes (0: none, or more than `cap`). */
+uint32_t scp_raw_track(scp_t *s, int track, uint8_t *dst, uint32_t cap) {
+    uint32_t at, len;
+    UINT got = 0;
+    if (!track_flux(s, track, &at, &len) || 16u + len > cap) return 0;
+    if (f_lseek(&s->f, s->offset[track]) != FR_OK || f_read(&s->f, dst, 16, &got) != FR_OK || got != 16)
+        return 0;
+    dst[12] = 16; dst[13] = dst[14] = dst[15] = 0;     /* flux right after this entry */
+    if (f_lseek(&s->f, at) != FR_OK || f_read(&s->f, dst + 16, len, &got) != FR_OK || got != len)
+        return 0;
+    return 16u + len;
 }

@@ -165,6 +165,7 @@ unsigned int chipReadByte(unsigned int address) {
     if (address > 0xDFFFFFu) return memory_expansion_read(address);
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
+        DMA_CATCH_UP();
         uint32_t off = address & 0x1FFu;
         debugChipAddress = off;
         if (off >= 32u) return 0;
@@ -176,6 +177,7 @@ unsigned int chipReadByte(unsigned int address) {
     if (address > 0xBFFFFFu)
         return in_custom_mirror(address) ? chipReadByte(custom_mirror(address)) : 0;
     // CIA A
+    if (address >= 0xBFD000u && address < 0xC00000u) DMA_CATCH_UP();
     if (address >= 0xBFE001u) return CIARead(&CIAA, (address - 0xBFE001u) >> 8);
     // CIA B
     if (address >= 0xBFD000u) return CIARead(&CIAB, (address - 0xBFD000u) >> 8);
@@ -198,6 +200,7 @@ unsigned int chipReadWord(unsigned int address) {
     if (address > 0xDFFFFFu) return memory_expansion_read_word(address);
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
+        DMA_CATCH_UP();
         uint32_t off = (address & 0x1FFu) >> 1;
         // Only a handful of registers are readable; DeniseID is the fallback
         if (off > 16) {
@@ -214,6 +217,7 @@ unsigned int chipReadWord(unsigned int address) {
     if (address > 0xBFFFFFu)
         return in_custom_mirror(address) ? chipReadWord(custom_mirror(address)) : 0;
     // CIA A/B
+    if (address >= 0xBFD000u && address < 0xC00000u) DMA_CATCH_UP();
     if (address >= 0xBFE001u) return CIARead(&CIAA, (address - 0xBFE001u) >> 8);
     if (address >= 0xBFD000u) return CIARead(&CIAB, (address - 0xBFD000u) >> 8);
     // 24-bit expansion fast RAM (not present → open bus)
@@ -243,6 +247,7 @@ unsigned int chipReadLong(unsigned int address) {
         return ram_read_long(&ext_rom_base[address - 0xE00000u]);
     // Custom chipset registers (32-bit = two 16-bit reads)
     if (address > 0xDFEFFFu) {
+        DMA_CATCH_UP();
         uint32_t off = (address & 0x1FFu) >> 1;
         // getChipReg32 covers only the first 16 registers; everything else
         // (including autoconfig space) reads 0 like its noReadL entries.
@@ -256,6 +261,7 @@ unsigned int chipReadLong(unsigned int address) {
     if (address > 0xBFFFFFu)
         return in_custom_mirror(address) ? chipReadLong(custom_mirror(address)) : 0;
     // CIA A/B
+    if (address >= 0xBFD000u && address < 0xC00000u) DMA_CATCH_UP();
     if (address >= 0xBFE001u) return CIARead(&CIAA, (address - 0xBFE001u) >> 8);
     if (address >= 0xBFD000u) return CIARead(&CIAB, (address - 0xBFD000u) >> 8);
     // 24-bit fast RAM
@@ -286,6 +292,7 @@ void chipWriteByte(unsigned int address, unsigned int value) {
     // the register to the byte twice (DiagROM's raster test writes COLOR00's
     // low byte: 0x47 -> 0x4747, colour 0x747).
     if (address > 0xDFEFFFu) {
+        DMA_CATCH_UP();
         chipWriteWord(address & ~1u, (value & 0xFFu) * 0x0101u);
         return;
     }
@@ -298,6 +305,7 @@ void chipWriteByte(unsigned int address, unsigned int value) {
         return;
     }
     // CIA A
+    if (address >= 0xBFA001u && address < 0xC00000u) DMA_CATCH_UP();
     if (address >= 0xBFE001u) { CIAWrite(&CIAA, (address - 0xBFE001u) >> 8, (uint8_t)value); return; }
     // CIA B
     if (address >= 0xBFD000u) { CIAWrite(&CIAB, (address - 0xBFD000u) >> 8, (uint8_t)value); return; }
@@ -330,6 +338,7 @@ void chipWriteWord(unsigned int address, unsigned int value) {
     }
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
+        DMA_CATCH_UP();
         uint32_t off = (address & 0x1FFu) >> 1;
         // The registers repeat every 0x200 (only A1-A8 select one).
         debugChipAddress = off;
@@ -371,6 +380,7 @@ void chipWriteLong(unsigned int address, unsigned int value) {
     if (address >= 0xF80000u) return;
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
+        DMA_CATCH_UP();
         uint32_t off = (address & 0x1FFu) >> 1;
         debugChipAddress = off;
         dmaIdleCacheValid = 0;

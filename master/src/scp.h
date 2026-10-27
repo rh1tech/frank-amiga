@@ -45,6 +45,7 @@ uint32_t scp_track(scp_t *s, int track, uint8_t *out, uint32_t cap, scp_cells_t 
  * track, then step until a step returns its bytes (bg_track is -1 again
  * when it finishes or fails). One job at a time across all images. */
 bool scp_bg_start(scp_t *s, int track);
+uint32_t scp_raw_track(scp_t *s, int track, uint8_t *dst, uint32_t cap);
 uint32_t scp_bg_step(scp_t *s, uint32_t slice, uint8_t *out, uint32_t cap, scp_cells_t *cells);
 
 #endif

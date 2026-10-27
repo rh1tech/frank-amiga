@@ -656,8 +656,24 @@ static int m68k_execute_running(int num_cycles);
 /* The main loop calls this every few DMA slots. Idle screens leave the CPU
    in STOP, so that case returns before any register is saved; the
    instruction loop lives in m68k_execute_running(). */
+/* frank-amiga: an interrupt level set while the chipset caught up with
+   the CPU inside an instruction (DMA.c dmaCatchUp()): taken at the next
+   instruction boundary, never in the middle of one. */
+volatile int m68ki_irq_deferred;
+
+void m68k_set_irq_deferred(unsigned int int_level)
+{
+	CPU_INT_LEVEL = int_level << 8;
+	m68ki_irq_deferred = 1;
+}
+
 int m68k_execute(int num_cycles)
 {
+	if(m68ki_irq_deferred)
+	{
+		m68ki_irq_deferred = 0;
+		m68ki_check_interrupts();
+	}
 	if(CPU_STOPPED)
 	{
 		/* Stopped or halted: no instructions, all cycles used */
@@ -693,6 +709,12 @@ static int __attribute__((noinline)) m68k_execute_running(int num_cycles)
 
 			/* Call external hook to peek at CPU */
 			m68ki_instr_hook(); /* auto-disable (see m68kcpu.h) */
+
+			if(m68ki_irq_deferred)
+			{
+				m68ki_irq_deferred = 0;
+				m68ki_check_interrupts();
+			}
 
 			/* Record previous program counter */
 			REG_PPC = REG_PC;
@@ -754,7 +776,9 @@ void m68k_modify_timeslice(int cycles)
 
 void m68k_end_timeslice(void)
 {
-	m68ki_initial_cycles = GET_CYCLES();
+	/* frank-amiga: as later Musashi, m68k_execute() then still returns the
+	   cycles run (not those left). */
+	m68ki_initial_cycles -= GET_CYCLES();
 	SET_CYCLES(0);
 }
 

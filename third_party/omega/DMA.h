@@ -36,6 +36,14 @@ int blitterExecute();
 
 void waitFreeSlot();
 
+// frank-amiga: catch-up scheduling (DMA.c dmaRunSlice()): the CPU runs a
+// slice first; its custom/CIA register accesses bring the chipset up to its
+// cycle first.
+extern int dmaInCpu;
+void dmaCatchUp(void);
+int dmaRunSlice(int *cpuBalance);   // returns the slots run
+#define DMA_CATCH_UP() do { if (dmaInCpu) dmaCatchUp(); } while (0)
+
 void evenCycle(void);
 void oddCycle(void);
 void dramCycle(void);

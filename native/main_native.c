@@ -85,6 +85,38 @@ static unsigned pcRing[4096], pcRingPos;
 void frankPcRing(unsigned pc) {
     static int done;
     pc &= 0xFFFFFFu;
+    {   // OMEGA_TRACE_FROM=<vbl>[:<count>]: from that frame, every instruction
+        // as it executes (disassembled then, for self-decrypting code), outside
+        // OMEGA_TRACE_SKIP=<lo>-<hi> (e.g. a trace handler).
+        static long from = -2, count, slo, shi;
+        if (from == -2) {
+            const char *e = getenv("OMEGA_TRACE_FROM"); from = -1;
+            if (e) { char *n; from = strtol(e, &n, 10); count = *n == ':' ? strtol(n + 1, NULL, 10) : 20000; }
+            e = getenv("OMEGA_TRACE_SKIP"); slo = shi = -1;
+            if (e) { char *n; slo = strtol(e, &n, 16); shi = *n == '-' ? strtol(n + 1, NULL, 16) : slo; }
+        }
+        extern unsigned long native_frame_counter;
+        if (from >= 0 && (long)native_frame_counter >= from && count > 0 &&
+            !(slo >= 0 && (long)pc >= slo && (long)pc <= shi)) {
+            char buf[128];
+            m68k_disassemble(buf, pc, M68K_CPU_TYPE_68000);
+            printf("X %06x %-32s d0=%08x d1=%08x d2=%08x d3=%08x a0=%08x a1=%08x a2=%08x a3=%08x\n", pc, buf,
+                   m68k_get_reg(NULL, M68K_REG_D0), m68k_get_reg(NULL, M68K_REG_D1), m68k_get_reg(NULL, M68K_REG_D2),
+                   m68k_get_reg(NULL, M68K_REG_D3), m68k_get_reg(NULL, M68K_REG_A0), m68k_get_reg(NULL, M68K_REG_A1),
+                   m68k_get_reg(NULL, M68K_REG_A2), m68k_get_reg(NULL, M68K_REG_A3));
+            count--;
+        }
+    }
+    {   // OMEGA_TRACE_PC=<hex>: registers each time the PC gets there (200 times)
+        static long tpc = -2; static int hits;
+        if (tpc == -2) { const char *e = getenv("OMEGA_TRACE_PC"); tpc = e ? strtol(e, NULL, 16) : -1; }
+        if (pc == (unsigned)tpc && hits++ < 200) {
+            extern unsigned long native_frame_counter;
+            printf("TRACE vbl %lu pc %06x", native_frame_counter, pc);
+            for (int r = M68K_REG_D0; r <= M68K_REG_A7; r++) printf(" %08x", m68k_get_reg(NULL, r));
+            printf("\n");
+        }
+    }
     pcRing[pcRingPos++ & 4095u] = pc;
     extern unsigned long native_frame_counter;
     static long at = -2;
@@ -347,6 +379,14 @@ int main(int argc, char **argv) {
             m68k_execute(16 * OMEGA_NATIVE_SLICE);
         }
 #else
+        static int catchup = -1, balance;
+        if (catchup < 0) catchup = getenv("OMEGA_CATCHUP") != NULL;
+        if (catchup) {
+            // frank-amiga: the board's scheduling (DMA.c dmaRunSlice()).
+            extern int dmaRunSlice(int *);
+            for (int i = 0; i < 200; )
+                i += dmaRunSlice(&balance);
+        } else
         for (int i = 0; i < 200; ++i) {
             dma_execute();
             cpu_execute();

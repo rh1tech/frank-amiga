@@ -131,8 +131,11 @@ static int clamp_delta(int d) { return d > 127 ? 127 : d < -127 ? -127 : d; }
 static uint32_t pace_base;
 static bool pace_locked;
 
+static uint64_t pace_wait_us;           /* time core 0 waited: headroom */
+
 static void pace(void) {
     const uint32_t frames = host_frames_emulated;
+    const uint64_t t0 = time_us_64();
     for (;;) {
         const uint64_t now = time_us_64();
         if (now - pump_refresh_us > 100000u) { pace_locked = false; return; }
@@ -146,7 +149,7 @@ static void pace(void) {
          * to make it up, which would only produce audio faster than the
          * DAC plays it. */
         if (ahead < -2) pace_base = frames - refreshes;
-        if (ahead <= 1) return;
+        if (ahead <= 1) { pace_wait_us += time_us_64() - t0; return; }
         tight_loop_contents();
     }
 }
@@ -266,12 +269,18 @@ static void __not_in_flash_func(emulation_loop)(void) {
     uint64_t next_report = time_us_64() + 2000000u;
     uint32_t last_frames = 0;
     for (;;) {
+#ifdef FRANK_SLICE_FIXED
         for (int i = 0; i < DMA_CPU_BATCH; i += OMEGA_CPU_SLICE_SLOTS) {
             dma_run(OMEGA_CPU_SLICE_SLOTS);
             cpu_cycle_balance += OMEGA_CPU_CYCLES_PER_SLOT * OMEGA_CPU_SLICE_SLOTS;
             if (cpu_cycle_balance > 0)
                 cpu_cycle_balance -= m68k_execute(cpu_cycle_balance);
         }
+#else
+        /* CPU first, chipset caught up at its register accesses (DMA.c). */
+        for (int i = 0; i < DMA_CPU_BATCH; )
+            i += dmaRunSlice(&cpu_cycle_balance);
+#endif
         if (hostResetRequested) {
             hostResetRequested = 0;
             cpu_keyboard_reset();
@@ -279,10 +288,13 @@ static void __not_in_flash_func(emulation_loop)(void) {
         const uint64_t now = time_us_64();
         if (now >= next_report) {
             const uint32_t f = host_frames_emulated;
-            printf("emu: %.1f frames/s, link %lu req %lu chunks %lu kwords "
+            static uint64_t last_wait;
+            const uint32_t busy = 100u - (uint32_t)((pace_wait_us - last_wait) * 100u / (now - next_report + 2000000u));
+            last_wait = pace_wait_us;
+            printf("emu: %.1f frames/s, busy %lu%%, link %lu req %lu chunks %lu kwords "
                    "%lu resyncs, audio drops %lu, bank swaps %lu, bplcon0 %04x, dpf rows %lu, clx %d, line0 %d, pc %06lx\n",
                    (double)(f - last_frames) * 1e6 / (double)(now - next_report + 2000000u),
-                   (unsigned long)pump_requests, (unsigned long)pump_chunks,
+                   (unsigned long)busy, (unsigned long)pump_requests, (unsigned long)pump_chunks,
                    (unsigned long)(pump_words / 1000u), (unsigned long)pump_resyncs,
                    (unsigned long)hostAudioDrops, (unsigned long)chip_bank_swaps,
                    chipset.bplcon0, (unsigned long)host_dpf_rows, clxActive != 0, omegaDirectFirstLine, (unsigned long)m68k_get_reg(NULL, M68K_REG_PC));
