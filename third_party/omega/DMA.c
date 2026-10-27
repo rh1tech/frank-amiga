@@ -1085,6 +1085,7 @@ static void __attribute__((noinline)) dmaEndOfLine(void) {
     rotatedTailEndOfLine();
 
     audioLine(lineLast + 1);
+    floppyLineTick();
 #if OMEGA_DYNAMIC_FIRST_LINE
     if (bitplaneLine.loresWords | bitplaneLine.hiresWords) {
         if (internal.vPos < contentTop) contentTop = internal.vPos;

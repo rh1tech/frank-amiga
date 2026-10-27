@@ -567,6 +567,23 @@ void floppyWriteAbort(void) {}
 volatile uint8_t floppyDirty[2];
 volatile uint8_t floppyDirtyTracks[2][20];
 
+// frank-amiga: a spinning disk pulses /INDEX once a revolution (300 rpm:
+// every 0.2 s, 3125 PAL lines) whether or not disk DMA reads it; loaders
+// wait for it with DMA off (Humans 2 polls CIA-B's FLG). DMA reads keep
+// their own pulse at the track's end (floppyDataRead()), so this one only
+// runs while no disk DMA is active.
+void floppyLineTick(void) {
+    static int lines;
+    const Fd_t *d = &df[driveSelected];
+    if (!d->hasDisk || (d->prb & 0x80) || (chipset.dsklen & 0x8000)) {
+        return;
+    }
+    if (++lines >= 3125) {
+        lines = 0;
+        CIAIndex(&CIAB);
+    }
+}
+
 void floppyIndexReset(){
     
        df[driveSelected].index = 4;

@@ -350,6 +350,13 @@ int main(int argc, char **argv) {
                        chipset.ddfstrt, chipset.ddfstop, chipset.diwstrt, chipset.diwstop,
                        chipset.bpl1mod, chipset.bpl2mod, chipset.bpl1pt, chipset.bpl2pt, chipset.bpl3pt,
                        chipset.bpl4pt, chipset.bpl5pt, chipset.bpl6pt, chipset.cop1lc, chipset.dmaconr);
+                printf("CPU f%lu pc %06x sr %04x d0 %08x d1 %08x a0 %08x a7 %08x intena %04x intreq %04x"
+                       " dsklen %04x dskpt %06x adkcon %04x ciaa.pra %02x ciab.prb %02x\n",
+                       native_frame_counter, m68k_get_reg(NULL, M68K_REG_PC) & 0xffffff,
+                       m68k_get_reg(NULL, M68K_REG_SR), m68k_get_reg(NULL, M68K_REG_D0),
+                       m68k_get_reg(NULL, M68K_REG_D1), m68k_get_reg(NULL, M68K_REG_A0),
+                       m68k_get_reg(NULL, M68K_REG_SP), chipset.intenar, chipset.intreqr,
+                       chipset.dsklen, chipset.dskpt, chipset.adkconr, CIAA.pra, CIAB.prb);
                 {   // the Copper list it runs, as MOVE/WAIT words
                     uint32_t pc = (chipset.cop1lc << 1) & 0x7FFFEu;
                     extern uint32_t nativeChipMask;

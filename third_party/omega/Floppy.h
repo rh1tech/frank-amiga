@@ -72,6 +72,8 @@ extern volatile uint8_t floppyDirty[2];
 extern volatile uint8_t floppyDirtyTracks[2][20];
 uint8_t* floppyInit(int);   // returns the mfm data buffer
 void floppyIndexReset();
+// frank-amiga: once a raster line (DMA.c): the free-running index pulse.
+void floppyLineTick(void);
 
 void floppyState();     //Get the drive state for the CIA
 void floppySetState();  //Set the Drive State for the CIA
