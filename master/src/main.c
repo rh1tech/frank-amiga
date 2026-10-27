@@ -156,8 +156,11 @@ static void cmd_hello(int argc, char **argv) { slave_hello(); }
 /* ── The Amiga display ── */
 static bool amiga_running;
 
+/* Core 1 renders (hostCore1Loop()); the scanout interrupts (DMA end of
+ * line, row expansion) run on core 0, which otherwise mostly waits on the
+ * link and the console: on core 1 they took ~16 % from the renderer, which
+ * in Copper-heavy frames could not keep up with the stream. */
 static void core1_amiga(void) {
-    video_start();
     hostCore1Loop();
 }
 
@@ -172,6 +175,7 @@ static void amiga_start(void) {
     usb_amiga_init();
     denise_c1_init();
     denise_audio_init();
+    video_start();
     multicore_launch_core1(core1_amiga);
     stream_start();
     amiga_running = true;
@@ -421,6 +425,7 @@ static void main_poll(void) {
         const uint64_t t0 = time_us_64();
         for (int n = 0; n < 8 && stream_poll() && stream_last_full &&
                         time_us_64() - t0 < 3000u; n++) {
+            console_rx_poll();
         }
         media_poll();
     } else {

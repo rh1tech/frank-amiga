@@ -14,5 +14,8 @@ typedef struct {
 
 /* Never returns. `idle` runs whenever no input is pending. */
 void console_run(const console_cmd_t *cmds, void (*idle)(void));
+/* Moves received characters into the console's buffer. Long jobs (the
+ * stream's chunk bursts) call it between steps: the UART holds only 32. */
+void console_rx_poll(void);
 
 #endif

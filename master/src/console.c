@@ -53,12 +53,29 @@ static void run_line(const console_cmd_t *cmds, char *line) {
     printf("ERR unknown command '%s'\n", argv[0]);
 }
 
+static char rx_buf[256];
+static uint32_t rx_head, rx_tail;
+
+void console_rx_poll(void) {
+    int ch;
+    while (rx_head - rx_tail < sizeof rx_buf &&
+           (ch = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT)
+        rx_buf[rx_head++ % sizeof rx_buf] = (char)ch;
+}
+
+static int console_getc(uint32_t timeout_us) {
+    console_rx_poll();
+    if (rx_head != rx_tail)
+        return (unsigned char)rx_buf[rx_tail++ % sizeof rx_buf];
+    return getchar_timeout_us(timeout_us);
+}
+
 void console_run(const console_cmd_t *cmds, void (*idle)(void)) {
     char line[LINE_MAX];
     size_t n = 0;
     printf("> ");
     for (;;) {
-        const int ch = getchar_timeout_us(1000);
+        const int ch = console_getc(1000);
         if (ch == PICO_ERROR_TIMEOUT) {
             if (idle) idle();
             continue;
