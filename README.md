@@ -73,3 +73,26 @@ into the ADF file on the card about a second later.
   duration.
 
 See `docs/bringup.md`.
+
+## License
+
+frank-amiga is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version (`LICENSE`). Files marked `SPDX-License-Identifier: GPL-3.0-or-later`
+are this project's own.
+
+It includes code under other, GPL-compatible licenses; those files keep their
+own terms and notices:
+
+| Part | Origin | License |
+|---|---|---|
+| `third_party/omega/` (except Musashi), `native/`, files marked MPL-2.0 or derived from rp2350-amiga (`slave/src/platform/`, `master/src/denise/`, `common/amiga/`) | Omega by Matt Parsons, via [fboldog/rp2350-amiga](https://github.com/fboldog/rp2350-amiga) | MPL-2.0 |
+| `third_party/omega/m68k*` | Musashi 3.4, Karl Stenerud | MIT-style (see file headers) |
+| `master/lib/fatfs/` | FatFs, ChaN | BSD-style (see `ff.c`) |
+| `master/lib/sdcard/` | Elehobica | BSD-2-Clause (`master/lib/sdcard/LICENSE`) |
+| `master/src/usb/` (HID, XInput) | usb64, Ryan Wendland and others | MIT |
+| `master/src/osd_font.h` | xrip/pico-nes | GPL-3.0 |
+
+Kickstart ROMs and Amiga software are not part of this project; use your own
+licensed copies (or AROS).

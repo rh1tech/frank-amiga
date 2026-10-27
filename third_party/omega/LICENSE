@@ -1,0 +1,11 @@
+The files in this directory come from Omega by Matt Parsons, as adapted in
+github.com/fboldog/rp2350-amiga (see UPSTREAM), with local changes.
+
+Except for Musashi (m68k*.c, m68k*.h; MIT-style licence in m68kcpu.c), they
+are subject to the terms of the Mozilla Public License, v. 2.0, also where a
+file carries no notice of its own. If a copy of the MPL was not distributed
+with this file, you can obtain one at https://mozilla.org/MPL/2.0/.
+
+The project as a whole is distributed under the GNU General Public License,
+version 3 or later (../../LICENSE), as MPL-2.0 section 3.3 permits; these
+files remain under the MPL-2.0.
