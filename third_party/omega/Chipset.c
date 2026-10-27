@@ -477,26 +477,44 @@ void dsksync(uint16_t value){
 }
 
 void cop1lch(uint16_t value){
+#ifndef PICO_BUILD
+    { extern void frankRegLog(const char *, uint16_t); frankRegLog("COP1LCH", value); }
+#endif
       chipset.cop1lc = CHIP_PTH_WORD(value) | (chipset.cop1lc & 0x00007FFF);
 }
 void cop1lcl(uint16_t value){
+#ifndef PICO_BUILD
+    { extern void frankRegLog(const char *, uint16_t); frankRegLog("COP1LCL", value); }
+#endif
         chipset.cop1lc = (value >> 1)  | (chipset.cop1lc & 0xFFFF8000);
 }
 void cop2lch(uint16_t value){
+#ifndef PICO_BUILD
+    { extern void frankRegLog(const char *, uint16_t); frankRegLog("COP2LCH", value); }
+#endif
       chipset.cop2lc = CHIP_PTH_WORD(value) | (chipset.cop2lc & 0x00007FFF); //this is only shifted by 15 because all addresses are word aligend
 }
 void cop2lcl(uint16_t value){
+#ifndef PICO_BUILD
+    { extern void frankRegLog(const char *, uint16_t); frankRegLog("COP2LCL", value); }
+#endif
 //    printf("(16bit)Copper 2: %0x\n",chipset.cop2lc);
     chipset.cop2lc = (value >> 1)  | (chipset.cop2lc & 0xFFFF8000);
 }
 
 void copjmp1(uint16_t value){
+#ifndef PICO_BUILD
+    { extern void frankRegLog(const char *, uint16_t); frankRegLog("COPJMP1", value); }
+#endif
     //printf("COPJMP1: %0x\n",chipset.cop1lc);
     internal.copperPC = chipset.cop1lc;
     internal.copperCycle = 0; // reset the Copper
 }
 
 void copjmp2(uint16_t value){
+#ifndef PICO_BUILD
+    { extern void frankRegLog(const char *, uint16_t); frankRegLog("COPJMP2", value); }
+#endif
     //printf("COPJMP2: %0x\n",chipset.cop2lc);
     internal.copperPC = chipset.cop2lc;
 
@@ -689,19 +707,31 @@ void aud3dat(uint16_t value){
 
 
 void bpl1pth(uint16_t value){
+#ifndef PICO_BUILD
+    { extern void frankRegLog(const char *, uint16_t); frankRegLog("BPL1PTH", value); }
+#endif
     chipset.bpl1pt = CHIP_PTH_WORD(value) | (chipset.bpl1pt & 0x00007FFF); //this is only shifted by 15 because all bitplane addresses are word aligend
     dmaBitplanePointerWrite(1, 1);
 }
 void bpl1ptl(uint16_t value){
+#ifndef PICO_BUILD
+    { extern void frankRegLog(const char *, uint16_t); frankRegLog("BPL1PTL", value); }
+#endif
     chipset.bpl1pt = (value >> 1)  | (chipset.bpl1pt & 0xFFFF8000);
     dmaBitplanePointerWrite(1, 0);
 }
 
 void bpl2pth(uint16_t value){
+#ifndef PICO_BUILD
+    { extern void frankRegLog(const char *, uint16_t); frankRegLog("BPL2PTH", value); }
+#endif
     chipset.bpl2pt = CHIP_PTH_WORD(value) | (chipset.bpl2pt & 0x00007FFF);
     dmaBitplanePointerWrite(2, 1);
 }
 void bpl2ptl(uint16_t value){
+#ifndef PICO_BUILD
+    { extern void frankRegLog(const char *, uint16_t); frankRegLog("BPL2PTL", value); }
+#endif
     chipset.bpl2pt = (value >> 1)  | (chipset.bpl2pt & 0xFFFF8000);
     dmaBitplanePointerWrite(2, 0);
 }

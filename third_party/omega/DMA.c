@@ -13,6 +13,8 @@
 //  with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "DMA.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include "Memory.h"
 #include "Chipset.h"
 #include "CIA.h"
@@ -1320,11 +1322,25 @@ static inline uint32_t copperBeam(void) {
     return ((uint32_t)(internal.vPos & 0xff) << 8) | internal.hPos;
 }
 
+// frank-amiga: the comparison mask always includes VP7 (IR2 bit 15 is BFD,
+// not a mask bit), and with BFD clear the blitter must be done too.
+static inline uint32_t copperCompareMask(void) {
+    return ((uint32_t)internal.IR2 | 0x8000u) & 0xFFFEu;
+}
 static inline int copperWaitReached(void) {
     if (copperWaitNextBank && (internal.vPos & 0xff) == 0xff)
         return 0;
-    return (copperBeam() & internal.IR2) >= copperWaitPosition;
+    if (!(internal.IR2 & 0x8000u) && (chipset.dmaconr & 0x4000u))
+        return 0;
+    return (copperBeam() & copperCompareMask()) >= copperWaitPosition;
 }
+
+// frank-amiga: Copper timing after vAmiga's state machine (CopperEvents.cpp):
+// a WAIT or SKIP takes two more slots after its second word (WAIT1/2,
+// SKIP1/2); a SKIP compares at the next instruction's fetch, and a skipped
+// MOVE is still fetched; a MOVE to COPJMPx jumps two slots later (JMP1/2).
+// copperCycle 5/6 = WAIT1/2, 7/8 = SKIP1/2, 9/10 = JMP1/2.
+static int copperSkipPending, copperSkip, copperJumpList;
 
 void evenCycle(void){
 
@@ -1333,6 +1349,13 @@ void evenCycle(void){
     // the slot a WAIT completes copperExecute() still runs and returns 0.
     if ((chipset.dmaconr & 0x280) == 0x280 && internal.copperCycle != 4 &&
         (internal.copperCycle != 3 || copperWaitReached())) {
+        // frank-amiga: the Copper is refused cycle $E0 ($E1 on a long
+        // line), and when it asks for it nobody gets the slot (as vAmiga's
+        // Agnus::busIsFree()). A MOVE run across the line end slips by a
+        // slot there: State of the Art's per-line Copper loops reach their
+        // exit SKIP one compare position later and leave the loop.
+        if (internal.hPos == (lineLast > 0xE2 ? 0xE1 : 0xE0))
+            return;
         if(copperExecute()==1){
             return;
         }
@@ -2067,6 +2090,11 @@ int copperExecute(){
         
     switch(internal.copperCycle){
         case 0:
+            if (copperSkipPending) {
+                copperSkipPending = 0;
+                copperSkip = (copperBeam() & copperCompareMask()) >= copperWaitPosition &&
+                             ((internal.IR2 & 0x8000u) || !(chipset.dmaconr & 0x4000u));
+            }
             internal.IR1 = CHIPW(internal.copperPC);
             internal.IR1 = (internal.IR1 <<8) | (internal.IR1 >>8);
             internal.copperPC += 1;
@@ -2096,8 +2124,17 @@ int copperExecute(){
             debugChipAddress = internal.IR1; //Debug what the Copper is writing to...
             debugChipValue   = internal.IR2;
 
-            putChipReg16[internal.IR1](internal.IR2);
             internal.copperCycle = 0;
+            if (copperSkip) {               // skipped: fetched, not done
+                copperSkip = 0;
+                return 1;
+            }
+            if (internal.IR1 == 0x44 || internal.IR1 == 0x45) {
+                copperJumpList = internal.IR1 - 0x43;   // 1 or 2
+                internal.copperCycle = 9;
+                return 1;
+            }
+            putChipReg16[internal.IR1](internal.IR2);
             return 1;
             break;
             
@@ -2117,31 +2154,36 @@ int copperExecute(){
                 return 1;
             }
             
-            internal.comparisonMask = (internal.IR2 | 0x0000); //ignore the instruction bits
+            internal.comparisonMask = (uint16_t)copperCompareMask();
 
             internal.IR1 &= internal.comparisonMask; //mask the wait position
 
             copperWaitPosition = internal.IR1;
+            // frank-amiga: a WAIT read at the very end of line 255 (after
+            // WAIT $FFDF) is for the next bank; earlier on that line it is
+            // compared as is (State of the Art's per-line Copper loops wait
+            // for VP7 there and must pass).
             copperWaitNextBank = (internal.vPos & 0xff) == 0xff &&
+                                 internal.hPos >= 0xD8 &&
                                  (internal.IR1 >> 8) < 0xff;
+            copperSkip = 0;
 
-            internal.copperCycle = 3;
-            
-            //Skip
-            if( (internal.IR2 & 1) == 1){
-                
-                if( (uint16_t)(internal.vPos << 8 | internal.hPos) >= internal.IR1){
-                    internal.copperPC +=2;
-                }
-                internal.copperCycle = 0;
-                
-                //printf("%04x Cop Skip!\n",internal.copperPC - 4);
-                return 1;
-                
-            }
-            
+            // WAIT1/WAIT2 or SKIP1/SKIP2 follow.
+            internal.copperCycle = (internal.IR2 & 1) ? 7 : 5;
             return 1;
             break;
+        case 5: internal.copperCycle = 6; return 1;     // WAIT1
+        case 6: internal.copperCycle = 3; return 1;     // WAIT2: now compare
+        case 7: internal.copperCycle = 8; return 1;     // SKIP1
+        case 8:                                          // SKIP2
+            internal.copperCycle = 0;
+            copperSkipPending = 1;
+            return 1;
+        case 9: internal.copperCycle = 10; return 1;    // JMP1
+        case 10:                                         // JMP2
+            internal.copperPC = copperJumpList == 2 ? chipset.cop2lc : chipset.cop1lc;
+            internal.copperCycle = 0;
+            return 1;
             
         case 3:
             
@@ -2215,6 +2257,24 @@ int blitterExecute(){
         return 0;
     }
     if (state == 0 && (chipset.dmaconr & 0x4240) == 0x4240) {
+#ifndef PICO_BUILD
+        {   // frank-amiga native: OMEGA_BLIT_LOG=from:to logs blits by frame.
+            extern unsigned long native_frame_counter;
+            static long from = -2, to;
+            if (from == -2) {
+                const char *e = getenv("OMEGA_BLIT_LOG");
+                from = -1;
+                if (e) sscanf(e, "%ld:%ld", &from, &to);
+            }
+            if (from >= 0 && (long)native_frame_counter >= from && (long)native_frame_counter <= to)
+                printf("BLIT f%lu v%d h%d con0 %04x con1 %04x size %dx%d A %06x B %06x C %06x D %06x"
+                       " mod %d %d %d %d fwm %04x lwm %04x adat %04x bdat %04x cdat %04x\n",
+                       native_frame_counter, internal.vPos, internal.hPos, chipset.bltcon0, chipset.bltcon1,
+                       chipset.bltsizh, chipset.bltsizv, chipset.bltapt, chipset.bltbpt, chipset.bltcpt,
+                       chipset.bltdpt, chipset.bltamod, chipset.bltbmod, chipset.bltcmod, chipset.bltdmod,
+                       chipset.bltafwm, chipset.bltalwm, chipset.bltadat, chipset.bltbdat, chipset.bltcdat);
+        }
+#endif
         blitTime = blitEstimate();
         blitDeadline = dmaSlotClock + (uint32_t)blitTime;
     }

@@ -56,7 +56,12 @@ static inline unsigned int customMirror(unsigned int address){
 // p2Vram (omega/Picasso2.c). Elsewhere 0x200000-0x9FFFFF is open bus.
 static unsigned int fastBase, fastSize, vramBase, vramSize, regsBase, regsSize;
 static uint8_t p2Vram[P2_VRAM_SIZE];
-#define IN_FAST_RAM(a) ((a) - fastBase < fastSize)
+// frank-amiga: OMEGA_A500=1 (main_native.c) makes the machine an A500 like
+// the board's default: chip RAM mirrors every 512 KB (nativeChipMask) and
+// 512 KB of slow RAM sits at 0xC00000 (served like Fast RAM, from low16Meg).
+uint32_t nativeChipMask = CHIPTOP;
+uint32_t nativeSlowSize;
+#define IN_FAST_RAM(a) ((a) - fastBase < fastSize || (a) - 0xC00000u < nativeSlowSize)
 #define IN_VRAM(a)     ((a) - vramBase < vramSize)
 #define IN_P2_REGS(a)  ((a) - regsBase < regsSize)
 
@@ -199,7 +204,7 @@ unsigned int chipReadByte(unsigned int address){
     }
 
     //RAM
-    address &=CHIPTOP;
+    address &= nativeChipMask;
     return low16Meg[address];
 }
 unsigned int chipReadWord(unsigned int address){
@@ -281,7 +286,7 @@ unsigned int chipReadWord(unsigned int address){
     }
     
     //RAM - Incomplete address decding means chip addresses below 2meg wrap around
-    address &=CHIPTOP;
+    address &= nativeChipMask;
     
     //return READ_WORD(chipset.chipram,address);
     uint16_t value = *(uint16_t*)&low16Meg[address];
@@ -367,7 +372,7 @@ unsigned int chipReadLong(unsigned int address){
     }
     
     //RAM - Incomplete address decding means chip addresses below 2meg wrap around
-    address &=CHIPTOP;
+    address &= nativeChipMask;
     
     //return READ_LONG(chipset.chipram,address);
     uint32_t value = *(uint32_t*)&low16Meg[address];
@@ -470,7 +475,7 @@ void chipWriteByte(unsigned int address,unsigned int value){   //ROM
     }
     
     //RAM - Incomplete address decding means chip addresses below 2meg wrap around
-    address &=CHIPTOP;
+    address &= nativeChipMask;
     low16Meg[address] = value;
 }
 
@@ -594,7 +599,7 @@ void chipWriteWord(unsigned int address,unsigned int value){
     }
     
     //RAM - Incomplete address decding means chip addresses below 2meg wrap around
-    address &=CHIPTOP;
+    address &= nativeChipMask;
     
     //WRITE_WORD(chipset.chipram,address,value);
     uint16_t* dest = (uint16_t*)&low16Meg[address];
@@ -744,7 +749,7 @@ void chipWriteLong(unsigned int address,unsigned int value){
     }
     
     //RAM - Incomplete address decding means chip addresses below 2meg wrap around
-    address &=CHIPTOP;
+    address &= nativeChipMask;
     
     //WRITE_LONG(chipset.chipram,address,value);
     uint32_t* dest = (uint32_t*)&low16Meg[address];

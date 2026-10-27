@@ -13,6 +13,7 @@
  * start with nothing left over from the previous machine.
  */
 #include "upload.h"
+#include "savestate.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -201,6 +202,10 @@ bool upload_handle(link_session_t *s, uint16_t op) {
         if (ok) link_s_bulk_send(s, base + h->arg1 * LINK_TRACK_BYTES, LINK_TRACK_BYTES);
         return true;
     }
+    case LINK_OP_STATE:
+        savestate_request(h->arg0 != 0, (int)h->arg1);
+        link_s_send_ctrl(s, LINK_OP_STATE | 1, 0, 0, NULL, 0);
+        return true;
     case LINK_OP_INSERT:
         eject_only = h->arg1 == 0;
         insert_req = (int)h->arg0;

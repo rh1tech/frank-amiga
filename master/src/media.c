@@ -215,6 +215,10 @@ static bool save_drive(int drive) {
     return saved == tracks;
 }
 
+bool media_state(bool load) {
+    return ctrl(LINK_OP_STATE, load ? 1u : 0u, 0);
+}
+
 void media_poll(void) {
     /* Save a second after the slave reports writes: a game's save is a
      * burst of tracks, taken in one go between two stream requests. */

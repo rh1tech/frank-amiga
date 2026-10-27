@@ -64,6 +64,9 @@ enum {
      *   DOWNLOAD  arg0 = LINK_UP_DF0/DF1, arg1 = track; ack, then the
      *             track's LINK_TRACK_BYTES as a bulk from the slave */
     LINK_OP_DIRTY        = 0x007A,
+    /* STATE: arg0 = 0 save / 1 load, arg1 = slot; done at the next frame
+     * end (the slave's console reports it). */
+    LINK_OP_STATE        = 0x007E,
     LINK_OP_DOWNLOAD     = 0x007C,
 };
 #define LINK_DISK_TRACKS 160u

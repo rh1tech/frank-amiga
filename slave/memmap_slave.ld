@@ -177,6 +177,27 @@ SECTIONS
         *(.rodata*)
         . = ALIGN(4);
 
+        /* frank-amiga: the emulated machine's variables (savestate.c copies
+         * this range and the matching one in .bss). */
+        . = ALIGN(4);
+        __emu_data_start__ = .;
+        *Audio.c.obj(.data .data.* .sdata .sdata.*) *Audio.c.o(.data .data.* .sdata .sdata.*)
+        *Blitter.c.obj(.data .data.* .sdata .sdata.*) *Blitter.c.o(.data .data.* .sdata .sdata.*)
+        *Chipset.c.obj(.data .data.* .sdata .sdata.*) *Chipset.c.o(.data .data.* .sdata .sdata.*)
+        *CIA.c.obj(.data .data.* .sdata .sdata.*) *CIA.c.o(.data .data.* .sdata .sdata.*)
+        *CPU.c.obj(.data .data.* .sdata .sdata.*) *CPU.c.o(.data .data.* .sdata .sdata.*)
+        *DMA.c.obj(.data .data.* .sdata .sdata.*) *DMA.c.o(.data .data.* .sdata .sdata.*)
+        *Expansion.c.obj(.data .data.* .sdata .sdata.*) *Expansion.c.o(.data .data.* .sdata .sdata.*)
+        *Floppy.c.obj(.data .data.* .sdata .sdata.*) *Floppy.c.o(.data .data.* .sdata .sdata.*)
+        *Gayle.c.obj(.data .data.* .sdata .sdata.*) *Gayle.c.o(.data .data.* .sdata .sdata.*)
+        *KickSmash.c.obj(.data .data.* .sdata .sdata.*) *KickSmash.c.o(.data .data.* .sdata .sdata.*)
+        *m68kcpu.c.obj(.data .data.* .sdata .sdata.*) *m68kcpu.c.o(.data .data.* .sdata .sdata.*)
+        *debug.c.obj(.data .data.* .sdata .sdata.*) *debug.c.o(.data .data.* .sdata .sdata.*)
+        *Collision.c.obj(.data .data.* .sdata .sdata.*) *Collision.c.o(.data .data.* .sdata .sdata.*)
+        *Memory.c.obj(.data .data.* .sdata .sdata.*) *Memory.c.o(.data .data.* .sdata .sdata.*)
+        *MemoryBoot.c.obj(.data .data.* .sdata .sdata.*) *MemoryBoot.c.o(.data .data.* .sdata .sdata.*)
+        . = ALIGN(4);
+        __emu_data_end__ = .;
         *(.data*)
         *(.sdata*)
 
@@ -218,6 +239,24 @@ SECTIONS
         . = ALIGN(4);
         __tbss_end = .;
 
+        __emu_bss_start__ = .;
+        *Audio.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *Audio.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *Blitter.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *Blitter.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *Chipset.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *Chipset.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *CIA.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *CIA.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *CPU.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *CPU.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *DMA.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *DMA.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *Expansion.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *Expansion.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *Floppy.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *Floppy.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *Gayle.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *Gayle.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *KickSmash.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *KickSmash.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *m68kcpu.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *m68kcpu.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *debug.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *debug.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *Collision.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *Collision.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *Memory.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *Memory.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        *MemoryBoot.c.obj(.bss .bss.* .sbss .sbss.* COMMON) *MemoryBoot.c.o(.bss .bss.* .sbss .sbss.* COMMON)
+        . = ALIGN(4);
+        __emu_bss_end__ = .;
         *(SORT_BY_ALIGNMENT(SORT_BY_NAME(.bss*)))
         *(COMMON)
         PROVIDE(__global_pointer$ = . + 2K);

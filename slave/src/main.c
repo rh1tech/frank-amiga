@@ -29,6 +29,7 @@
 #include "host_link.h"
 #include "link_pump.h"
 #include "upload.h"
+#include "savestate.h"
 extern volatile uint32_t host_dpf_rows;
 #include "Collision.h"
 #include "DisplayLayout.h"
@@ -204,6 +205,7 @@ void host_frame_paced(void) {
     pace();
     sample_banks();
     upload_core0_frame();
+    savestate_core0_frame();
     link_input_ev_t ev;
     while (pump_input_pop(&ev)) {
         switch (ev.type) {

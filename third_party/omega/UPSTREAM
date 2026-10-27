@@ -13,3 +13,4 @@ Local change: blitter end timing — blitter_execute() still computes a blit at 
 Local change: Floppy.c re-arms an external drive's ID mode at every motor off (trackloaders identify DF1); motor on ends ID mode.
 Local change: m68kconf.h PICO PC-relative reads are masked with ADDRESS_68K (24-bit bus).
 Local change: Blitter.c line mode rewritten as the hardware steps it (A/B/C/D per pixel, error term in BLTAPT, SIGN, SUD/SUL/AUL, SING one-dot, texture rotation, registers left for chained lines).
+Local change: Copper timing after vAmiga (WAIT1/2, SKIP1/2 compared at the next fetch, skipped MOVE still fetched, COPJMP after JMP1/2, cycle $E0 refused), VP7 always compared, BFD=0 waits for the blitter, next-bank WAIT only at the end of line 255.

@@ -73,7 +73,8 @@ static inline uint8_t *chip_ptr(uint32_t a) {
     return &low16Meg[a & CHIPTOP];
 }
 #else
-static inline uint8_t *chip_ptr(uint32_t a) { return &low16Meg[a & CHIPTOP]; }
+extern uint32_t nativeChipMask;     // memory_native.c (OMEGA_A500: 512 KB)
+static inline uint8_t *chip_ptr(uint32_t a) { return &low16Meg[a & nativeChipMask]; }
 #endif
 #endif
 // Once per frame: chip RAM addresses in use and their weights; moves hot

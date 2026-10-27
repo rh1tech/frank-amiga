@@ -223,6 +223,13 @@ static void cmd_key(int argc, char **argv) {
     if (strcmp(what, "down")) input_key(code, true);
 }
 
+/* state save|load: the slave's savestate. */
+static void cmd_state(int argc, char **argv) {
+    const bool load = argc > 1 && !strcmp(argv[1], "load");
+    if (argc < 2 || (!load && strcmp(argv[1], "save"))) return;
+    media_state(load);
+}
+
 /* usb: what the USB host sees. */
 static void cmd_usb(int argc, char **argv) {
     (void)argc; (void)argv;
@@ -361,6 +368,7 @@ static const console_cmd_t cmds[] = {
     { "type",   cmd_type,   "type <text>: type into the Amiga (\\n = Return)" },
     { "key",    cmd_key,    "key <hex> [up|down|tap]: Amiga raw keycode" },
     { "mouse",  cmd_mouse,  "mouse <dx> <dy> [buttons]" },
+    { "state",  cmd_state,  "state save|load: savestate (slave PSRAM)" },
     { "usb",    cmd_usb,    "usb: connected keyboard, mouse, gamepads" },
     { "mem",    cmd_mem,    "mem <chip KB> <slow KB>: RAM (512/1024/2048, 0/512/1024), cold-start" },
     { "joy",    cmd_joy,    "joy <port> <bits> (1U 2D 4L 8R 16F 32F2)" },

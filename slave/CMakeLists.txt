@@ -41,6 +41,7 @@ add_executable(frank-amiga-slave
     src/host_link.c
     src/link_pump.c
     src/upload.c
+    src/savestate.c
     ${REPO_ROOT}/common/amiga/Collision.c
     src/platform/Memory.c
     src/platform/MemoryBoot.c

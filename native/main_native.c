@@ -115,6 +115,19 @@ static int load_rom_file(const char *path) {
     return 0;
 }
 
+// frank-amiga: OMEGA_REGW_LOG=<frame> logs bitplane pointer writes then.
+void frankRegLog(const char *name, uint16_t value) {
+    extern unsigned long native_frame_counter;
+    static long at = -2, to;
+    if (at == -2) {
+        const char *e = getenv("OMEGA_REGW_LOG");
+        at = -1;
+        if (e && sscanf(e, "%ld:%ld", &at, &to) == 1) to = at;
+    }
+    if (at < 0 || (long)native_frame_counter < at || (long)native_frame_counter > to) return;
+    printf("REGW f%lu v%d h%d %s = %04x (cpu pc %06x)\n", native_frame_counter, internal.vPos,
+           internal.hPos, name, value, m68k_get_reg(NULL, M68K_REG_PPC) & 0xffffff);
+}
 #ifdef FRANK_TRACE_EXCEPTIONS
 extern unsigned long native_frame_counter;
 void frankTraceException(unsigned vector, unsigned pc) {
@@ -232,6 +245,11 @@ int main(int argc, char **argv) {
     hostInit();
     // OMEGA_FAST_RAM_KB: the Zorro II Fast RAM board (default 2048, as the
     // board; 0 for none).
+    if (getenv("OMEGA_A500")) {   // frank-amiga: 512 KB chip + 512 KB slow
+        extern uint32_t nativeChipMask, nativeSlowSize;
+        nativeChipMask = 0x7FFFFu;
+        nativeSlowSize = 0x80000u;
+    }
     const char *fastKb = getenv("OMEGA_FAST_RAM_KB");
     expansionFastRamSize = (fastKb ? (uint32_t)atoi(fastKb) : 2048u) << 10;
     // OMEGA_RTG: the Picasso II+ RTG card (omega/Picasso2.c): 0 for none,
@@ -312,6 +330,38 @@ int main(int argc, char **argv) {
             }
         }
 #endif
+        {   // frank-amiga: OMEGA_DUMP_AT=<frame> writes chip RAM to chip.bin then.
+            static long dat = -2;
+            if (dat == -2) { const char *e = getenv("OMEGA_DUMP_AT"); dat = e ? atol(e) : -1; }
+            if (dat >= 0 && (long)native_frame_counter == dat) {
+                FILE *f = fopen("chip.bin", "wb");
+                if (f) { fwrite(low16Meg, 1, 0x80000, f); fclose(f); }
+                printf("DUMP f%lu chip.bin\n", native_frame_counter);
+                dat = -1;
+            }
+        }
+        {   // frank-amiga: OMEGA_REGS_AT=<frame> prints the display registers then.
+            static long at = -2;
+            if (at == -2) { const char *e = getenv("OMEGA_REGS_AT"); at = e ? atol(e) : -1; }
+            if (at >= 0 && (long)native_frame_counter == at && internal.vPos == 100) {
+                printf("REGS f%lu bplcon0 %04x con1 %04x con2 %04x ddf %04x-%04x diw %04x-%04x mod %d %d"
+                       " bpl %06x %06x %06x %06x %06x %06x cop1lc %06x dmacon %04x\n",
+                       native_frame_counter, chipset.bplcon0, chipset.bplcon1, chipset.bplcon2,
+                       chipset.ddfstrt, chipset.ddfstop, chipset.diwstrt, chipset.diwstop,
+                       chipset.bpl1mod, chipset.bpl2mod, chipset.bpl1pt, chipset.bpl2pt, chipset.bpl3pt,
+                       chipset.bpl4pt, chipset.bpl5pt, chipset.bpl6pt, chipset.cop1lc, chipset.dmaconr);
+                {   // the Copper list it runs, as MOVE/WAIT words
+                    uint32_t pc = (chipset.cop1lc << 1) & 0x7FFFEu;
+                    extern uint32_t nativeChipMask;
+                    for (int k = 0; k < 6000; k++, pc += 4) {
+                        const uint8_t *m = &low16Meg[pc & nativeChipMask];
+                        printf("COP %06x %02x%02x %02x%02x\n", pc, m[0], m[1], m[2], m[3]);
+                        if (m[0] == 0xff && m[1] == 0xff && m[2] == 0xff && m[3] == 0xfe) break;
+                    }
+                }
+                at = -1;
+            }
+        }
         // KickSmash "Switch and Reboot": the bank's ROM, then a reset, as
         // the board does (between slices, once the reply was read).
         {

@@ -88,7 +88,7 @@ static const char *base(const char *path) {
     return b ? b + 1 : path;
 }
 
-enum { I_DF0, I_DF1, I_KICK, I_RESET, I_VOL, I_JOY, I_EXIT, I_COUNT };
+enum { I_DF0, I_DF1, I_KICK, I_RESET, I_SAVE, I_LOAD, I_VOL, I_JOY, I_EXIT, I_COUNT };
 
 static void draw(void) {
     char line[COLS + 1];
@@ -102,6 +102,8 @@ static void draw(void) {
         snprintf(line, sizeof line, " Kick: %.28s", base(media_config.kick));
         put(2 + I_KICK, line);
         put(2 + I_RESET, " Reset (Ctrl-Amiga-Amiga)");
+        put(2 + I_SAVE, " Save state");
+        put(2 + I_LOAD, " Load state");
         snprintf(line, sizeof line, " Volume: %lu/256   (left/right)", (unsigned long)audio_get_volume());
         put(2 + I_VOL, line);
         snprintf(line, sizeof line, " Joystick keys: %s", usb_amiga_joykeys_name(media_config.joykeys));
@@ -192,6 +194,8 @@ void osd_key(uint8_t hid, bool down) {
             sel = top = 0;
             break;
         case I_RESET: stream_input(LINK_EV_RESET, 0, 0, 0); visible = false; break;
+        case I_SAVE: media_state(false); visible = false; break;
+        case I_LOAD: media_state(true); visible = false; break;
         case I_JOY: media_config.joykeys = (uint8_t)((media_config.joykeys + 1) % JOYKEYS_COUNT); break;
         case I_EXIT: visible = false; break;
         }

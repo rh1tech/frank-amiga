@@ -580,6 +580,17 @@ int hostResetRequested;
 // Sends one Amiga raw keycode (0x00-0x67) to the keyboard serial port, as
 // the Amiga keyboard does: the byte is rotated left with the up/down flag
 // in bit 0 and inverted. Ctrl + both Amiga keys resets the 68000.
+// frank-amiga: a savestate was loaded (savestate.c): the machine jumped, so
+// core 1's picture of it is stale. Every row is resent (as for a new
+// layout), with the palette and the DPF state.
+void host_state_restored(void) {
+    row_layout[0] = row_layout[1] = ~0u;
+    host_run.palette_sent = internal.paletteGeneration - 1u;
+    dpf_row = -1;
+    dpf_state = ~0u;
+    dpf_next_x = -1000;
+}
+
 void hostAmigaKey(uint8_t code, int released) {
     CIAWrite(&CIAA, 0xC, (uint8_t)~((code << 1) | (released ? 1 : 0)));
     keyboardInt();

@@ -33,6 +33,8 @@ extern volatile uint32_t hostAudioDrops;
 void host_frame_paced(void);
 
 void hostAmigaKey(uint8_t code, int released);
+/* A savestate was loaded: resend everything (savestate.c). */
+void host_state_restored(void);
 extern int hostResetRequested;
 
 #endif
