@@ -20,6 +20,8 @@
 #include "Host.h"
 #include "HostRing.h"
 #include "host_link.h"
+#include "parallel.h"
+#include "link_pump.h"
 #include "../omega/DisplayLayout.h"
 #include "../omega/Chipset.h"
 #include "../omega/CIA.h"
@@ -733,6 +735,11 @@ static inline uint32_t *evqReserve(uint32_t n) {
         host_evq_waits++;
         const uint32_t t0 = timer_hw->timerawl;
         do {
+#ifdef FRANK_PARALLEL
+            // The CPU's core writing a register: it is the consumer too.
+            if (par_running && get_core_num() == 1u)
+                pump_service();
+#endif
             evq_tail_seen = __atomic_load_n(&evq_tail, __ATOMIC_ACQUIRE);
         } while (evqRoom(head) < need);
         host_evq_wait_us += timer_hw->timerawl - t0;
@@ -869,16 +876,44 @@ void host_state_restored(void) {
 // Core 1: turns queued records into messages while the ring has room for
 // the most any record may add. Returns whether any was taken.
 #define EVQ_RING_MARGIN 512u
-bool host_events_drain(void) {
+static bool host_events_drain_some(uint32_t budget);
+bool host_events_drain(void) { return host_events_drain_some(~0u); }
+
+// At most `budget` records (the CPU's core: between its steps).
+bool host_events_drain_batch(uint32_t budget) { return host_events_drain_some(budget); }
+
+// frank-amiga: with FRANK_PARALLEL both cores build messages when they
+// would otherwise wait (the CPU's core between its steps, the chipset's
+// while the CPU is behind), one at a time.
+static volatile uint8_t drain_lock;
+
+static bool host_events_drain_locked(uint32_t budget);
+static bool host_events_drain_some(uint32_t budget) {
+#ifdef FRANK_PARALLEL
+    if (__atomic_exchange_n(&drain_lock, 1, __ATOMIC_ACQUIRE))
+        return false;
+    const bool r = host_events_drain_locked(budget);
+    __atomic_store_n(&drain_lock, 0, __ATOMIC_RELEASE);
+    return r;
+#else
+    return host_events_drain_locked(budget);
+#endif
+}
+
+static bool host_events_drain_locked(uint32_t budget) {
     uint32_t tail = evq_tail;
     const uint32_t head = __atomic_load_n(&evq_head, __ATOMIC_ACQUIRE);
     if (tail == head) {
         // Nothing queued: wait a little before looking again, so this
-        // core's polling does not compete with core 0 for SRAM.
-        busy_wait_at_least_cycles(400);
+        // core's polling does not compete with core 0 for SRAM (not while
+        // this core runs the CPU too).
+#ifdef FRANK_PARALLEL
+        if (!par_running)
+#endif
+            busy_wait_at_least_cycles(400);
         return false;
     }
-    while (tail != head &&
+    while (tail != head && budget-- &&
            RING_WORDS - ringFill(ring_wr, __atomic_load_n(&ring_tail, __ATOMIC_ACQUIRE)) >= EVQ_RING_MARGIN) {
         const uint32_t *e = &evq[tail % EVQ_WORDS];
         const uint32_t h = e[0];

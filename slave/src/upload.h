@@ -16,6 +16,8 @@ bool upload_handle(link_session_t *s, uint16_t op);
 /* Core 0, once per frame: holds while an upload rewrites memory, performs
  * a requested disk change. */
 void upload_core0_frame(void);
+/* Core 0: park while core 1 uploads (also between frames, parallel.h). */
+void upload_core0_hold(void);
 void upload_set_running(bool on);
 
 /* What the master uploaded before the last reset (verified by CRC), or

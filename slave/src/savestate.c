@@ -102,6 +102,8 @@ static void load(void) {
     printf("state: loaded (saved at frame %lu)\n", (unsigned long)h.frame);
 }
 
+bool savestate_requested(void) { return req >= 0; }
+
 void savestate_core0_frame(void) {
     const int r = req;
     if (r < 0)

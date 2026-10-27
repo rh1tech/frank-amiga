@@ -66,12 +66,16 @@ static volatile int insert_req = -1;      /* drive to (re)insert, or -1 */
 static volatile bool eject_only;          /* ... or just to empty */
 static volatile bool insert_ext;          /* ... or a flux image (tracks from the master) */
 
-void upload_core0_frame(void) {
+void upload_core0_hold(void) {
     if (hold_req) {
         held = true;
         while (hold_req) tight_loop_contents();
         held = false;
     }
+}
+
+void upload_core0_frame(void) {
+    upload_core0_hold();
     static int insert_wait;
     const int d = insert_req;
     if (d == 0 || d == 1) {

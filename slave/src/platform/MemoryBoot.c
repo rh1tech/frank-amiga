@@ -4,6 +4,9 @@
 
 #include "Memory.h"
 #include "psram.h"
+#ifdef FRANK_PARALLEL
+#include "../parallel.h"
+#endif
 #include "../omega/Expansion.h"
 #if OMEGA_RTG
 #include "../omega/Picasso2.h"
@@ -130,8 +133,19 @@ void chip_bank_sample(const uint32_t *addrs, const uint32_t *weights, int n) {
     }
     /* Hysteresis: only when the newcomer is clearly hotter. */
     if (hot_heat > cool_heat + cool_heat / 2u + BANK_PERIOD) {
+#ifdef FRANK_PARALLEL
+        /* The CPU reads chip RAM through the bank table: stopped meanwhile
+         * (between instructions or waiting inside one; fetches look the
+         * page up each time). */
+        if (par_stop(false)) {
+            bank_swap(cool_slot, hot);
+            chip_bank_swaps++;
+            par_resume();
+        }
+#else
         bank_swap(cool_slot, hot);
         chip_bank_swaps++;
+#endif
     }
     for (uint32_t b = 0; b < CHIP_BANKS; ++b)
         bank_heat[b] >>= 1;             /* decay: recent frames count most */

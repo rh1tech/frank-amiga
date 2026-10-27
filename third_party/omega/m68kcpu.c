@@ -776,6 +776,13 @@ void m68k_modify_timeslice(int cycles)
 
 void m68k_end_timeslice(void)
 {
+#ifdef FRANK_PARALLEL
+	/* frank-amiga: from the chipset's core (slave/src/parallel.h) this
+	   would touch the other core's cycle count; its interrupts are
+	   deferred to the next instruction anyway. */
+	if (*(volatile uint32_t *)0xd0000000u != 1u)   /* SIO CPUID */
+		return;
+#endif
 	/* frank-amiga: as later Musashi, m68k_execute() then still returns the
 	   cycles run (not those left). */
 	m68ki_initial_cycles -= GET_CYCLES();

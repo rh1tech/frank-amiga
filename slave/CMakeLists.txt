@@ -70,10 +70,11 @@ target_compile_definitions(frank-amiga-slave PRIVATE ${FRANK_DEFINITIONS}
     OMEGA_REALTIME=0
     OMEGA_HOT_OPCODES_IN_RAM=1
     CHIP_SRAM_BANKS=4u           # four 64 KB chip RAM banks in SRAM (promoted)
+    FRANK_PARALLEL=1             # 68000 on core 1, chipset on core 0 (parallel.h)
     ${FRANK_EXTRA_DEFS}
     OMEGA_CPU_CYCLES_PER_SLOT=2
     OMEGA_CPU_SLICE_SLOTS=8
-    RING_WORDS=8000u             # ~32 KB: core 1 fills it itself (host_link.c)
+    RING_WORDS=7000u             # ~28 KB: core 1 fills it itself (host_link.c)
     PICO_STACK_SIZE=0x1000       # core 0: all of SCRATCH_Y
     PICO_CORE1_STACK_SIZE=0x1000 # core 1: all of SCRATCH_X
     PICO_HEAP_SIZE=0x100

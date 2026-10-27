@@ -26,6 +26,13 @@
 #include "HostRing.h"
 #include "upload.h"
 #include "../omega/Floppy.h"
+#include "../omega/m68k.h"
+#include "parallel.h"
+
+#ifdef FRANK_PARALLEL
+static bool par_in_cpu;                  /* inside m68k_execute() */
+static bool par_cpu_step(void);
+#endif
 
 static link_t link;
 static link_session_t sess;
@@ -105,6 +112,11 @@ static void fill_chunk(bool resync) {
     uint32_t avail = host_ring_pending(&slot);
     const uint64_t deadline = time_us_64() + 2000u;
     while (avail < LINK_STREAM_PAYLOAD_WORDS && time_us_64() < deadline) {
+#ifdef FRANK_PARALLEL
+        /* The CPU runs on this core: no waiting for a fuller chunk. */
+        if (par_running)
+            break;
+#endif
         if (!host_events_drain())
             tight_loop_contents();
         avail = host_ring_pending(&slot);
@@ -182,40 +194,144 @@ static void fill_chunk(bool resync) {
     pump_chunks++;
 }
 
+/* One step: answers the master's control frame if it has rung, else turns
+ * queued records into messages. */
+static void __not_in_flash_func(pump_once)(void) {
+    link_db_set(sess.link, false);      /* idle: DB_SM low (see link_m_resync) */
+    /* Until the master rings, build messages from core 0's records. */
+    if (!link_db_get(sess.link)) {
+        host_events_drain();
+        return;
+    }
+    const uint16_t op = link_s_wait_ctrl(&sess, 1000);
+    if (!op) return;
+    const link_hdr_t *hdr = link_rx_hdr(&sess);
+    switch (op) {
+    case LINK_OP_HELLO:
+        reply_hello();
+        break;
+    case LINK_OP_PING:
+        link_s_send_ctrl(&sess, LINK_OP_PONG, hdr->arg0, hdr->arg1, NULL, 0);
+        break;
+    case LINK_OP_STREAM_REQ: {
+        pump_requests++;
+        const bool resync = hdr->arg1 & LINK_STREAM_FLAG_RESYNC;
+        const link_input_batch_t *in =
+            (const link_input_batch_t *)(sess.ctrl_rx + sizeof(link_hdr_t));
+        const uint32_t count = in->count < 24u ? in->count : 24u;
+        for (uint32_t i = 0; i < count; i++)
+            input_push(&in->ev[i]);
+        fill_chunk(resync);
+        link_s_bulk_send(&sess, chunk, LINK_STREAM_CHUNK_BYTES);
+        break;
+    }
+    default:
+        upload_handle(&sess, op);   /* Kickstart / disk uploads, boot */
+        break;
+    }
+}
+
+void __not_in_flash_func(pump_service)(void) { pump_once(); }
+
+#ifdef FRANK_PARALLEL
+/* ── The 68000 on this core (parallel.h) ── */
+volatile uint32_t par_cpu_slot, par_dma_slot;
+volatile bool par_running;
+volatile int par_stop_req, par_cpu_parked;
+static uint32_t par_cpu_cycles;          /* CPU cycles run (this core) */
+
+static inline bool par_on_cpu_core(void) { return get_core_num() == 1u; }
+
+/* While the CPU waits, the link keeps going. */
+static void __not_in_flash_func(par_wait_step)(void) {
+    pump_once();
+}
+
+void __not_in_flash_func(parSync)(void) {
+    if (!par_running || !par_on_cpu_core())
+        return;
+    const uint32_t t = (par_cpu_cycles + (uint32_t)m68k_cycles_run()) >> 1;
+    __dmb();
+    if ((int32_t)(t - par_cpu_slot) > 0)
+        par_cpu_slot = t;
+    if (par_dma_slot == t && !par_stop_req) {
+        __dmb();
+        return;
+    }
+    par_cpu_parked = 2;
+    while (par_dma_slot != t || par_stop_req)
+        par_wait_step();
+    par_cpu_parked = 0;
+    __dmb();
+}
+
+/* Runs the CPU for a little while, at most PAR_LEAD_SLOTS ahead of the
+ * chipset; false if it had to wait. */
+static bool __not_in_flash_func(par_cpu_step)(void) {
+    if (par_stop_req) {
+        par_cpu_parked = 1;
+        while (par_stop_req)
+            par_wait_step();
+        par_cpu_parked = 0;
+        __dmb();
+    }
+    const int32_t room =
+        (int32_t)(par_dma_slot + PAR_LEAD_SLOTS - (par_cpu_cycles >> 1));
+    if (room <= 0)
+        return false;
+    int budget = room * 2;
+    if (budget > PAR_CPU_CHUNK)
+        budget = PAR_CPU_CHUNK;
+    par_in_cpu = true;
+    par_cpu_cycles += (uint32_t)m68k_execute(budget);
+    par_in_cpu = false;
+    __dmb();
+    par_cpu_slot = par_cpu_cycles >> 1;
+    return true;
+}
+
+bool par_stop(bool between) {
+    par_stop_req = 1;
+    __dmb();
+    for (;;) {
+        const int parked = par_cpu_parked;
+        if (parked == 1 || (parked == 2 && !between))
+            break;
+        if (parked == 2) {          /* inside an instruction: not now */
+            par_stop_req = 0;
+            __dmb();
+            return false;
+        }
+        tight_loop_contents();
+    }
+    __dmb();
+    return true;
+}
+
+void par_resume(void) {
+    __dmb();
+    par_stop_req = 0;
+}
+#endif
+
 static void __not_in_flash_func(pump_loop)(void) {
     for (;;) {
-        link_db_set(sess.link, false);      /* idle: DB_SM low (see link_m_resync) */
-        /* Until the master rings, build messages from core 0's records. */
-        if (!link_db_get(sess.link)) {
-            host_events_drain();
+#ifdef FRANK_PARALLEL
+        if (par_running) {
+            /* The CPU first: the chipset waits for it. The master's
+             * requests are answered at once; messages are built only while
+             * the CPU has to wait (its lead used up), a few at a time. If
+             * they pile up, the chipset stops at the full queue, the CPU
+             * soon after, and this core catches up. */
+            const bool ran = par_cpu_step();
+            if (link_db_get(sess.link))
+                pump_once();
+            else if (!ran)
+                host_events_drain_batch(32);
             continue;
         }
-        const uint16_t op = link_s_wait_ctrl(&sess, 1000);
-        if (!op) continue;
-        const link_hdr_t *hdr = link_rx_hdr(&sess);
-        switch (op) {
-        case LINK_OP_HELLO:
-            reply_hello();
-            break;
-        case LINK_OP_PING:
-            link_s_send_ctrl(&sess, LINK_OP_PONG, hdr->arg0, hdr->arg1, NULL, 0);
-            break;
-        case LINK_OP_STREAM_REQ: {
-            pump_requests++;
-            const bool resync = hdr->arg1 & LINK_STREAM_FLAG_RESYNC;
-            const link_input_batch_t *in =
-                (const link_input_batch_t *)(sess.ctrl_rx + sizeof(link_hdr_t));
-            const uint32_t count = in->count < 24u ? in->count : 24u;
-            for (uint32_t i = 0; i < count; i++)
-                input_push(&in->ev[i]);
-            fill_chunk(resync);
-            link_s_bulk_send(&sess, chunk, LINK_STREAM_CHUNK_BYTES);
-            break;
-        }
-        default:
-            upload_handle(&sess, op);   /* Kickstart / disk uploads, boot */
-            break;
-        }
+#endif
+        pump_once();
     }
 }
 

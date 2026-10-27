@@ -16,6 +16,7 @@
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
+#include "hardware/sync.h"
 #include "hardware/structs/scb.h"
 #include "hardware/regs/addressmap.h"
 
@@ -29,6 +30,7 @@
 #include "host_link.h"
 #include "link_pump.h"
 #include "upload.h"
+#include "parallel.h"
 #include "savestate.h"
 extern volatile uint32_t host_dpf_rows;
 #include "Collision.h"
@@ -212,7 +214,15 @@ void host_frame_paced(void) {
     pace();
     sample_banks();
     upload_core0_frame();
+#ifdef FRANK_PARALLEL
+    /* A savestate is taken or restored with the CPU between instructions. */
+    if (savestate_requested() && par_stop(true)) {
+        savestate_core0_frame();
+        par_resume();
+    }
+#else
     savestate_core0_frame();
+#endif
     link_input_ev_t ev;
     while (pump_input_pop(&ev)) {
         switch (ev.type) {
@@ -280,15 +290,42 @@ static void __not_in_flash_func(emulation_loop)(void) {
             if (cpu_cycle_balance > 0)
                 cpu_cycle_balance -= m68k_execute(cpu_cycle_balance);
         }
+#elif defined(FRANK_PARALLEL)
+        /* The chipset behind the CPU on core 1 (parallel.h). */
+        for (int i = 0; i < 64; i++) {
+            const uint32_t target = par_cpu_slot;
+            __dmb();
+            uint32_t n = target - par_dma_slot;
+            if (!n) {
+                /* Waiting for the CPU: build messages meanwhile. */
+                upload_core0_hold();
+                host_events_drain_batch(16);
+                continue;
+            }
+            if (n > 227u)
+                n = 227u;
+            dma_run((int)n);
+            __dmb();
+            par_dma_slot += n;
+        }
+        (void)cpu_cycle_balance;
 #else
         /* CPU first, chipset caught up at its register accesses (DMA.c). */
         for (int i = 0; i < DMA_CPU_BATCH; )
             i += dmaRunSlice(&cpu_cycle_balance);
 #endif
+#ifdef FRANK_PARALLEL
+        if (hostResetRequested && par_stop(true)) {
+            hostResetRequested = 0;
+            cpu_keyboard_reset();
+            par_resume();
+        }
+#else
         if (hostResetRequested) {
             hostResetRequested = 0;
             cpu_keyboard_reset();
         }
+#endif
         const uint64_t now = time_us_64();
         if (now >= next_report) {
             const uint32_t f = host_frames_emulated;
@@ -445,6 +482,11 @@ int main(void) {
         }
     }
     upload_set_running(true);
+#ifdef FRANK_PARALLEL
+    par_cpu_slot = par_dma_slot = 0;
+    __dmb();
+    par_running = true;         /* core 1 starts the CPU */
+#endif
     printf("Entering emulation loop\n");
     emulation_loop();
 }

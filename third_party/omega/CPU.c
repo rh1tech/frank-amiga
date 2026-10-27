@@ -19,6 +19,7 @@
 #include "Memory.h"
 
 #include "CIA.h"
+#include "DMA.h"
 #include "Expansion.h"
 
 
@@ -43,6 +44,9 @@ static uint32_t cpu_reset_pc(void){
 
 /* Called when the CPU pulses the RESET line */
 void cpu_pulse_reset(void){
+#ifdef FRANK_PARALLEL
+    parSync();      // the chips are reset at the CPU's time
+#endif
     uint32_t pc = m68k_get_reg(NULL, M68K_REG_PC);
     uint32_t sp = m68k_get_reg(NULL, M68K_REG_SP);
 
@@ -159,8 +163,14 @@ void cpu_execute(){
 // end.
 extern int dmaInCatchUp;
 static inline void setIrq(unsigned int level){
+#ifdef FRANK_PARALLEL
+    // The chipset runs on the other core: always at the CPU's next
+    // instruction (slave/src/parallel.h).
+    m68k_set_irq_deferred(level);
+#else
     if (dmaInCatchUp) m68k_set_irq_deferred(level);
     else m68k_set_irq(level);
+#endif
 }
 
 void checkInterrupt(Chipset_t* chipset){

@@ -14,5 +14,7 @@
 void savestate_request(int load, int slot);
 /* Core 0, once per emulated frame (after it is queued). */
 void savestate_core0_frame(void);
+/* A save or load waits for the next frame end. */
+bool savestate_requested(void);
 
 #endif

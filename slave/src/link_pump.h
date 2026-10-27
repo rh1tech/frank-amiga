@@ -13,6 +13,10 @@
 /* Core 1 entry: owns the link from here on. */
 void pump_core1_entry(void);
 
+/* Core 1: one step of the link (a control frame if the master rang, else
+ * message building); for waits inside the CPU (parallel.h). */
+void pump_service(void);
+
 /* Core 0: next input event from the master, if any. */
 bool pump_input_pop(link_input_ev_t *ev);
 

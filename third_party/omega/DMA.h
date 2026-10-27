@@ -42,7 +42,13 @@ void waitFreeSlot();
 extern int dmaInCpu;
 void dmaCatchUp(void);
 int dmaRunSlice(int *cpuBalance);   // returns the slots run
+#ifdef FRANK_PARALLEL
+// frank-amiga: the chipset runs on the other core (slave/src/parallel.h).
+void parSync(void);
+#define DMA_CATCH_UP() parSync()
+#else
 #define DMA_CATCH_UP() do { if (dmaInCpu) dmaCatchUp(); } while (0)
+#endif
 
 void evenCycle(void);
 void oddCycle(void);
