@@ -1385,6 +1385,52 @@ void dma_run(int slots){
                 continue;
             }
         }
+        if ((chipset.dmaconr & 0x280) == 0x280 && internal.copperCycle != 4 &&
+            internal.copperCycle != 3 && slotRunEnd[internal.hPos] <= internal.hPos + 1) {
+            // frank-amiga: the Copper executes outside a fetch run (the
+            // blank, border lines): run the slots back to back up to the
+            // line's last slot, each through its slot function as below,
+            // the Copper's own and the idle blitter's ones inline.
+            const int h = internal.hPos;
+            int end = h + slots + 1;
+            if (end > lineLast)
+                end = lineLast;             // the line end runs below
+            if (end > h + 1) {
+                void (**table)() = slotTable;
+                const uint32_t clock0 = dmaSlotClock;
+                const int copperRefused = lineLast > 0xE2 ? 0xE1 : 0xE0;
+                int x = h;
+                while (x < end) {
+                    dmaSlotClock = clock0 + (uint32_t)(x - h);
+                    internal.hPos = x;
+                    void (*const fn)() = table[x];
+                    if (fn == oddCycle) {
+                        if (blitterState != 0 || (chipset.dmaconr & 0x4240) == 0x4240)
+                            oddCycle();
+                    } else if (fn == evenCycle && internal.copperCycle != 3 &&
+                               internal.copperCycle != 4 && x != copperRefused) {
+                        if (copperExecute() != 1)
+                            oddCycle();
+                    } else {
+                        fn();
+                    }
+                    if (x == bitplaneLine.lastCycle)
+                        dmaFetchWindowComplete();
+                    ++x;
+                    if (dmaLineStateDirty || slotRunEnd[x] > x + 1)
+                        break;
+                }
+                dmaSlotClock = clock0;
+                const int k = x - h;
+                DSTAT(dma_stat_batched, (uint32_t)k);
+                internal.hPos = x;
+                slots -= k - 1;
+                beamV = internal.vPos;
+                beamH = x - 1;
+                dmaEClock(k);
+                continue;
+            }
+        }
 #endif
 
         // SDL_AtomicSet(&cpuWait, 1); // single-threaded on RP2350
