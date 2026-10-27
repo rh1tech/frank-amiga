@@ -29,6 +29,7 @@
 #include "media.h"
 #include "osd.h"
 #include "usb_amiga.h"
+#include "usb/usbhid.h"
 #include "audio/audio.h"
 #include "video/hstx_video.h"
 #include "pico/multicore.h"
@@ -222,6 +223,22 @@ static void cmd_key(int argc, char **argv) {
     if (strcmp(what, "down")) input_key(code, true);
 }
 
+/* usb: what the USB host sees. */
+static void cmd_usb(int argc, char **argv) {
+    (void)argc; (void)argv;
+    printf("usb: keyboard %s, mouse %s\n", usbhid_keyboard_connected() ? "yes" : "no",
+           usbhid_mouse_connected() ? "yes" : "no");
+    for (int i = 0; i < 2; i++) {
+        usbhid_gamepad_state_t g;
+        usbhid_get_gamepad_state_idx(i, &g);
+        if (g.connected)
+            printf("usb: gamepad %d (Amiga port %d): x %d y %d dpad %x buttons %04x\n", i + 1,
+                   i == 0 ? 2 : 1, g.axis_x, g.axis_y, g.dpad, g.buttons);
+        else
+            printf("usb: gamepad %d: none\n", i + 1);
+    }
+}
+
 static void wait_slave_and_stream(void);
 
 /* mem <chip KB> <slow KB>: the machine's RAM, then cold-start. */
@@ -344,6 +361,7 @@ static const console_cmd_t cmds[] = {
     { "type",   cmd_type,   "type <text>: type into the Amiga (\\n = Return)" },
     { "key",    cmd_key,    "key <hex> [up|down|tap]: Amiga raw keycode" },
     { "mouse",  cmd_mouse,  "mouse <dx> <dy> [buttons]" },
+    { "usb",    cmd_usb,    "usb: connected keyboard, mouse, gamepads" },
     { "mem",    cmd_mem,    "mem <chip KB> <slow KB>: RAM (512/1024/2048, 0/512/1024), cold-start" },
     { "joy",    cmd_joy,    "joy <port> <bits> (1U 2D 4L 8R 16F 32F2)" },
     { "reset",  cmd_reset,  "Ctrl-Amiga-Amiga" },
