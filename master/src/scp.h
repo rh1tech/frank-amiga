@@ -18,6 +18,9 @@ typedef struct {
     FIL f;
     uint32_t offset[SCP_TRACKS];   /* track headers in the file (0: none) */
     uint32_t ticks_ns;             /* flux time unit */
+    DWORD clmt[64];                /* FatFs fast-seek cluster map */
+    int bg_track;                  /* background decode (-1: none) */
+    uint32_t bg_at, bg_len, bg_got;
 } scp_t;
 
 bool scp_open(scp_t *s, const char *path);
@@ -26,5 +29,10 @@ void scp_close(scp_t *s);
  * its first sync word-aligned; returns the bytes (a multiple of 4), 0 if
  * there is no such track. */
 uint32_t scp_track(scp_t *s, int track, uint8_t *out, uint32_t cap);
+/* The same in the background, a slice of the file at a time: start a
+ * track, then step until a step returns its bytes (bg_track is -1 again
+ * when it finishes or fails). One job at a time across all images. */
+bool scp_bg_start(scp_t *s, int track);
+uint32_t scp_bg_step(scp_t *s, uint32_t slice, uint8_t *out, uint32_t cap);
 
 #endif

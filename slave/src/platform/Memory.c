@@ -165,7 +165,7 @@ unsigned int chipReadByte(unsigned int address) {
     if (address > 0xDFFFFFu) return memory_expansion_read(address);
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
-        uint32_t off = address - 0xDFF000u;
+        uint32_t off = address & 0x1FFu;
         debugChipAddress = off;
         if (off >= 32u) return 0;
         return getChipReg8[off]();
@@ -198,7 +198,7 @@ unsigned int chipReadWord(unsigned int address) {
     if (address > 0xDFFFFFu) return memory_expansion_read_word(address);
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
-        uint32_t off = (address - 0xDFF000u) >> 1;
+        uint32_t off = (address & 0x1FFu) >> 1;
         // Only a handful of registers are readable; DeniseID is the fallback
         if (off > 16) {
             if (off == 62) return chipset.deniseid;
@@ -243,7 +243,7 @@ unsigned int chipReadLong(unsigned int address) {
         return ram_read_long(&ext_rom_base[address - 0xE00000u]);
     // Custom chipset registers (32-bit = two 16-bit reads)
     if (address > 0xDFEFFFu) {
-        uint32_t off = (address - 0xDFF000u) >> 1;
+        uint32_t off = (address & 0x1FFu) >> 1;
         // getChipReg32 covers only the first 16 registers; everything else
         // (including autoconfig space) reads 0 like its noReadL entries.
         if (off >= 16u) return 0;
@@ -330,11 +330,8 @@ void chipWriteWord(unsigned int address, unsigned int value) {
     }
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
-        uint32_t off = (address - 0xDFF000u) >> 1;
-        // The tables cover 0xDFF000..0xDFF1FF. A runaway 68k can write
-        // anywhere up to the ROM; ignore it rather than jump through a
-        // pointer read past the table.
-        if (off >= 256u) return;
+        uint32_t off = (address & 0x1FFu) >> 1;
+        // The registers repeat every 0x200 (only A1-A8 select one).
         debugChipAddress = off;
         debugChipValue   = value;
         dmaIdleCacheValid = 0;
@@ -374,8 +371,7 @@ void chipWriteLong(unsigned int address, unsigned int value) {
     if (address >= 0xF80000u) return;
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
-        uint32_t off = (address - 0xDFF000u) >> 1;
-        if (off >= 256u) return;    // see chipWriteWord
+        uint32_t off = (address & 0x1FFu) >> 1;
         debugChipAddress = off;
         dmaIdleCacheValid = 0;
         putChipReg32[off](value);

@@ -153,7 +153,7 @@ unsigned int chipReadByte(unsigned int address){
     
     //Chipregs
     if(address>0xDFEFFF){
-        address = (address - 0xDFF000);
+        address = (address & 0x1FF);
         debugChipAddress = address;
         if (address >= 32)
             return 0;
@@ -239,7 +239,7 @@ unsigned int chipReadWord(unsigned int address){
     
     //Chipregs
     if(address>0xDFEFFF){
-        address = (address - 0xDFF000) >> 1;
+        address = (address & 0x1FF) >> 1;
         
         if(address>16){
             
@@ -333,7 +333,7 @@ unsigned int chipReadLong(unsigned int address){
     
     //Chipregs
     if(address>0xDFEFFF){
-        address = (address - 0xDFF000) >> 1;
+        address = (address & 0x1FF) >> 1;
         // getChipReg32 covers only the first 16 registers; everything else
         // reads 0 like its noReadL entries (as src/Memory.c).
         if (address >= 16u)
@@ -561,7 +561,7 @@ void chipWriteWord(unsigned int address,unsigned int value){
     
     //Chipregs
     if(address>0xDFEFFF){
-        address = (address - 0xDFF000) >> 1;
+        address = (address & 0x1FF) >> 1;
         
         debugChipAddress = address;    // used for debugging to identify the register being called
         debugChipValue = value;

@@ -72,6 +72,15 @@ static bool ctrl(uint16_t op, uint32_t a0, uint32_t a1) {
 
 /* Flux images in DF0/DF1: their tracks go to the slave as it asks. */
 static scp_t scp[2];
+static uint16_t track_len[2][SCP_TRACKS];   /* decoded and cached (0: not yet) */
+static int bg_next[2];                      /* where the background decoding goes on */
+static uint8_t bg_failed[2][SCP_TRACKS / 8];  /* tracks it could not read */
+
+static void cache_reset(int d) {
+    memset(track_len[d], 0, sizeof track_len[d]);
+    memset(bg_failed[d], 0, sizeof bg_failed[d]);
+    bg_next[d] = 0;
+}
 
 static bool is_scp(const char *path) {
     const size_t n = strlen(path);
@@ -180,6 +189,7 @@ bool media_boot(void) {
     for (int d = 0; d < 2 && ok; d++) {
         const char *path = d ? media_config.df1 : media_config.df0;
         scp_close(&scp[d]);
+        cache_reset(d);
         if (!path[0]) continue;
         if (is_scp(path)) {
             if (scp_open(&scp[d], path) || (media_remount() && scp_open(&scp[d], path)))
@@ -198,6 +208,7 @@ bool media_insert(int drive, const char *path) {
     if (strcmp(path, "none") && is_scp(path)) {
         char p[128];
         prefix_path(p, sizeof p, path);
+        cache_reset(drive);
         if (!scp_open(&scp[drive], p) && !(media_remount() && scp_open(&scp[drive], p))) {
             printf("media: %s is not an SCP image\n", p);
             return false;
@@ -268,20 +279,88 @@ bool media_state(bool load) {
     return ctrl(LINK_OP_STATE, load ? 1u : 0u, 0);
 }
 
-/* The slave's flux-image drive wants a track: decode and send it. */
+/* Bench: decode track `track` of the flux image in `drive` into master
+ * PSRAM at 0x180000 (uncached view 0x15180000, read over SWD). */
+uint32_t media_flux_dump(int drive, int track, uint8_t *dst) {
+    if (drive < 0 || drive > 1 || !scp[drive].open) return 0;
+    const uint32_t n = scp_track(&scp[drive], track, buf, sizeof buf);
+    memcpy(dst, buf, n);
+    memset(track_len, 0, sizeof track_len);   /* bench area overlaps the cache */
+    return n;
+}
+
+/* Decoded flux tracks, cached in master PSRAM (16 KB slots, 2.6 MB a
+ * drive): revisits are instant. The rest of the disk is decoded in the
+ * background, from the last track asked for on, so most requests find
+ * their track ready. */
+#define TRACK_CACHE(d, t) ((uint8_t *)(0x11000000u + 0x200000u + (uint32_t)(d) * 0x2A0000u + \
+                                       (uint32_t)(t) * 0x4000u))
+
+static uint32_t track_get(int d, int t) {
+    if (t < 0 || t >= SCP_TRACKS) return 0;
+    if (!track_len[d][t]) {
+        const uint32_t n = scp_track(&scp[d], t, buf, sizeof buf);
+        if (!n) return 0;
+        memcpy(TRACK_CACHE(d, t), buf, n);
+        track_len[d][t] = (uint16_t)n;
+    }
+    return track_len[d][t];
+}
+
+/* The slave's flux-image drive wants a track: send it. */
 static void serve_tracks(void) {
     for (int guard = 0; guard < 2; guard++) {
-        if (!ctrl(LINK_OP_TRACKREQ, 0, 0)) return;
+        if (!ctrl(LINK_OP_TRACKREQ, 0, 0)) break;
         const uint32_t d = link_rx_hdr(sess)->arg0, t = link_rx_hdr(sess)->arg1;
-        if (d > 1 || !scp[d].open) return;
-        const uint32_t n = scp_track(&scp[d], (int)t, buf, sizeof buf);
-        if (!n) return;
+        if (d > 1 || !scp[d].open) break;
+        const uint64_t t0 = time_us_64();
+        const uint32_t n = track_get((int)d, (int)t);
+        if (!n) break;
+        memcpy(buf, TRACK_CACHE(d, t), n);
         const bool ok = link_m_send_ctrl(sess, LINK_OP_TRACKDATA, d | t << 8, n, NULL, 0) &&
                         link_m_bulk_send(sess, buf, n) && link_m_recv_ctrl(sess) &&
                         link_rx_hdr(sess)->op == (LINK_OP_TRACKDATA | 1u) && link_rx_hdr(sess)->arg0;
         if (!ok) {
             printf("media: DF%lu track %lu not delivered\n", (unsigned long)d, (unsigned long)t);
-            return;
+            break;
+        }
+        const uint32_t ms = (uint32_t)((time_us_64() - t0) / 1000u);
+        if (ms > 50u)   /* a decode the background did not hide */
+            printf("media: DF%lu track %lu took %lu ms\n", (unsigned long)d, (unsigned long)t,
+                   (unsigned long)ms);
+        bg_next[d] = (int)t & ~1;   /* go on from this cylinder */
+    }
+}
+
+/* One background step: a slice of a track's flux from the card (4 KB, a
+ * couple of ms), or its decoding at the end. The stream takes one chunk a
+ * main-loop pass, so the steps get a third of the time at most. */
+static void prefetch_step(void) {
+    static int bg_d = -1;
+    static uint64_t next_us;
+    const uint64_t now = time_us_64();
+    if (now < next_us) return;
+    if (bg_d >= 0 && scp[bg_d].bg_track >= 0) {
+        const int t = scp[bg_d].bg_track;
+        const uint32_t n = scp_bg_step(&scp[bg_d], 4096u, buf, sizeof buf);
+        next_us = time_us_64() + 2u * (time_us_64() - now);
+        if (n && !track_len[bg_d][t]) {
+            memcpy(TRACK_CACHE(bg_d, t), buf, n);
+            track_len[bg_d][t] = (uint16_t)n;
+        }
+        return;
+    }
+    bg_d = -1;
+    for (int d = 0; d < 2; d++) {
+        if (!scp[d].open) continue;
+        for (int k = 0; k < SCP_TRACKS; k++) {
+            const int t = (bg_next[d] + k) % SCP_TRACKS;
+            if (!track_len[d][t] && scp[d].offset[t] && !(bg_failed[d][t >> 3] & (1u << (t & 7)))) {
+                if (scp_bg_start(&scp[d], t)) bg_d = d;
+                else bg_failed[d][t >> 3] |= (uint8_t)(1u << (t & 7));
+                bg_next[d] = t;
+                return;
+            }
         }
     }
 }
@@ -290,6 +369,8 @@ void media_poll(void) {
     if (stream_track_wanted) {
         stream_track_wanted = false;
         serve_tracks();
+    } else {
+        prefetch_step();
     }
     /* Save a second after the slave reports writes: a game's save is a
      * burst of tracks, taken in one go between two stream requests. */
@@ -306,6 +387,7 @@ void media_poll(void) {
 
 /* Bench helper: save `size` bytes of master PSRAM at `offset` as a file. */
 bool media_sdput(uint32_t offset, uint32_t size, const char *path) {
+    memset(track_len, 0, sizeof track_len);   /* the bench area overlaps the track cache */
     if (!media_mount()) return false;
     char p[128];
     prefix_path(p, sizeof p, path);

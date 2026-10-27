@@ -1494,6 +1494,9 @@ void diskCycle(void){
                 return;
             }
 
+            if (!floppyDataReady())
+                return;     // frank-amiga: flux track still on its way
+
             // frank-amiga: without ADKCON WORDSYNC the transfer starts at
             // once instead of at the next sync word.
             if (!(chipset.adkconr & 0x400))

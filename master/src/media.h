@@ -33,6 +33,8 @@ bool media_insert(int drive, const char *path);
 /* Savestate on the slave (PSRAM, this firmware build only): save or load
  * at its next frame end. */
 bool media_state(bool load);
+/* Bench: a flux image's track as MFM into master PSRAM 0x100000; bytes. */
+uint32_t media_flux_dump(int drive, int track, uint8_t *dst);
 /* Main loop: saves written disk tracks back to their ADF files. */
 void media_poll(void);
 bool media_sdput(uint32_t psram_offset, uint32_t size, const char *path);

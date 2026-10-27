@@ -250,6 +250,24 @@ int main(int argc, char **argv) {
         nativeChipMask = 0x7FFFFu;
         nativeSlowSize = 0x80000u;
     }
+    {   // frank-amiga: OMEGA_DF0_TRACKS=<dir> with len.bin (168 x u32 LE) and
+        // trk.bin (16 KB a track): DF0 as raw MFM tracks (flux images).
+        const char *dir = getenv("OMEGA_DF0_TRACKS");
+        if (dir) {
+            static uint8_t tracks[168 * 0x4000];
+            static uint32_t len[168];
+            char p[600];
+            snprintf(p, sizeof p, "%s/len.bin", dir);
+            FILE *f = fopen(p, "rb");
+            if (f) { fread(len, 4, 168, f); fclose(f); }
+            snprintf(p, sizeof p, "%s/trk.bin", dir);
+            f = fopen(p, "rb");
+            if (f) { fread(tracks, 1, sizeof tracks, f); fclose(f); }
+            extern void floppyNativeTracks(const uint8_t *, const uint32_t *);
+            floppyNativeTracks(tracks, len);
+            printf("DF0: raw MFM tracks from %s\n", dir);
+        }
+    }
     const char *fastKb = getenv("OMEGA_FAST_RAM_KB");
     expansionFastRamSize = (fastKb ? (uint32_t)atoi(fastKb) : 2048u) << 10;
     // OMEGA_RTG: the Picasso II+ RTG card (omega/Picasso2.c): 0 for none,
@@ -462,7 +480,25 @@ int main(int argc, char **argv) {
                 printf("  vbl=%lu DF0 ejected\n", native_frame_counter);
             }
             if (swapAt >= 0 && (long)native_frame_counter == swapAt + 25 && !df[0].hasDisk) {
-                int fd = open(swapPath, O_RDONLY);
+                // A directory: raw MFM tracks (len.bin, trk.bin) as
+                // OMEGA_DF0_TRACKS.
+                char lp[600];
+                snprintf(lp, sizeof lp, "%s/len.bin", swapPath);
+                FILE *lf = fopen(lp, "rb");
+                if (lf) {
+                    static uint8_t tracks[168 * 0x4000];
+                    static uint32_t len[168];
+                    fread(len, 4, 168, lf);
+                    fclose(lf);
+                    snprintf(lp, sizeof lp, "%s/trk.bin", swapPath);
+                    if ((lf = fopen(lp, "rb"))) { fread(tracks, 1, sizeof tracks, lf); fclose(lf); }
+                    extern void floppyNativeTracks(const uint8_t *, const uint32_t *);
+                    floppyNativeTracks(tracks, len);
+                    floppyInsert(0);
+                    printf("  vbl=%lu DF0 inserted tracks %s\n", native_frame_counter, swapPath);
+                    swapAt = -1;
+                }
+                int fd = swapAt < 0 ? -1 : open(swapPath, O_RDONLY);
                 if (fd >= 0) {
                     ADF2MFM(fd, df[0].mfmData);
                     close(fd);

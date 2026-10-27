@@ -16,3 +16,5 @@ Local change: Blitter.c line mode rewritten as the hardware steps it (A/B/C/D pe
 Local change: Copper timing after vAmiga (WAIT1/2, SKIP1/2 compared at the next fetch, skipped MOVE still fetched, COPJMP after JMP1/2, cycle $E0 refused), VP7 always compared, BFD=0 waits for the blitter, next-bank WAIT only at the end of line 255.
 Local change: Floppy.c floppyLineTick() — free-running /INDEX pulse (every 3125 lines) while the selected drive spins with no disk DMA.
 Local change: Floppy.c external-track drives (flux images): track requests, variable track length, floppyMountExternal/TrackWanted/TrackLoaded.
+Local change: Floppy.c floppyDataReady() — disk DMA waits (no words transferred) while a flux drive's track is still on its way from the master; DMA.c diskCycle() asks it.
+Local change: Floppy.c floppySetState() — every selected drive takes motor/step/side, status lines wired-OR over connected drives; a port with no drive leaves /CHNG /RDY /TK0 /WPRO high.

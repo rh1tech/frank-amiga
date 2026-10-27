@@ -230,6 +230,21 @@ static void cmd_state(int argc, char **argv) {
     media_state(load);
 }
 
+/* fluxdump <drive> <track>: bench, decoded flux track to PSRAM 0x180000. */
+static void cmd_fluxdump(int argc, char **argv) {
+    if (argc < 3) return;
+    if (!strcmp(argv[2], "all")) {
+        /* Every track: track t at 0x180000 + t * 16 KB, lengths at 0x170000. */
+        volatile uint32_t *len = (volatile uint32_t *)0x15170000u;
+        for (int t = 0; t < 168; t++)
+            len[t] = media_flux_dump(atoi(argv[1]), t, (uint8_t *)0x15180000u + (uint32_t)t * 0x4000u);
+        printf("fluxdump all done\n");
+        return;
+    }
+    printf("fluxdump %lu\n", (unsigned long)media_flux_dump(atoi(argv[1]), atoi(argv[2]),
+                                                           (uint8_t *)0x15180000u));
+}
+
 /* usb: what the USB host sees. */
 static void cmd_usb(int argc, char **argv) {
     (void)argc; (void)argv;
@@ -369,6 +384,7 @@ static const console_cmd_t cmds[] = {
     { "key",    cmd_key,    "key <hex> [up|down|tap]: Amiga raw keycode" },
     { "mouse",  cmd_mouse,  "mouse <dx> <dy> [buttons]" },
     { "state",  cmd_state,  "state save|load: savestate (slave PSRAM)" },
+    { "fluxdump", cmd_fluxdump, "fluxdump <drive> <track>: bench, MFM track to PSRAM 0x180000" },
     { "usb",    cmd_usb,    "usb: connected keyboard, mouse, gamepads" },
     { "mem",    cmd_mem,    "mem <chip KB> <slow KB>: RAM (512/1024/2048, 0/512/1024), cold-start" },
     { "joy",    cmd_joy,    "joy <port> <bits> (1U 2D 4L 8R 16F 32F2)" },

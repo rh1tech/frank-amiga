@@ -499,6 +499,15 @@ void floppyTrackLoaded(int drive, int track, uint32_t len) {
     __atomic_store_n(&ext_have[drive], track, __ATOMIC_RELEASE);
 }
 
+// A flux drive whose track has not arrived yet holds disk DMA back (the
+// words would be gaps, and a loader that started its read at once would get
+// a broken track and retry forever); the disk just reaches the data later.
+int floppyDataReady(void) {
+    const int d = driveSelected;
+    return d >= FLOPPY_DISK_DRIVES || !ext_mode[d] || !df[d].hasDisk ||
+           floppyEnsureTrackCached(d);
+}
+
 static inline uint32_t floppyTrackLength(int drive) {
     return drive < FLOPPY_DISK_DRIVES && ext_mode[drive] ? ext_len[drive] : 12668u;
 }
@@ -611,6 +620,7 @@ void floppyWriteDone(void) {
 }
 #else
 static int drive_connected[4] = { 1, 0, 0, 0 };
+int floppyDataReady(void) { return 1; }
 void floppyWriteByte(uint8_t b) { (void)b; }
 void floppyWriteDone(void) {}
 void floppyWriteAbort(void) {}
@@ -622,11 +632,12 @@ volatile uint8_t floppyDirtyTracks[2][20];
 // every 0.2 s, 3125 PAL lines) whether or not disk DMA reads it; loaders
 // wait for it with DMA off (Humans 2 polls CIA-B's FLG). DMA reads keep
 // their own pulse at the track's end (floppyDataRead()), so this one only
-// runs while no disk DMA is active.
+// runs while no disk DMA is active (or DMA waits for a flux track).
 void floppyLineTick(void) {
     static int lines;
     const Fd_t *d = &df[driveSelected];
-    if (!d->hasDisk || (d->prb & 0x80) || (chipset.dsklen & 0x8000)) {
+    if (!d->hasDisk || (d->prb & 0x80) ||
+        ((chipset.dsklen & 0x8000) && floppyDataReady())) {
         return;
     }
     if (++lines >= 3125) {
@@ -641,7 +652,29 @@ void floppyIndexReset(){
     
 }
 
+#ifndef PICO_BUILD
+// frank-amiga native: DF0 from raw MFM tracks (the master's flux decoding,
+// dumped over SWD): track t at nativeTracks + t * 16 KB, nativeLen[t] bytes.
+static const uint8_t *nativeTracks;
+static uint32_t nativeLen[168];
+void floppyNativeTracks(const uint8_t *tracks, const uint32_t *len) {
+    nativeTracks = tracks;
+    memcpy(nativeLen, len, sizeof nativeLen);
+}
+#endif
+
 uint8_t floppyDataRead(){ //this function should be called by the DMA
+#ifndef PICO_BUILD
+    if (nativeTracks && driveSelected == 0) {
+        const int t = df[0].cylinder * 2 + df[0].side;
+        const uint32_t len = nativeLen[t] ? nativeLen[t] : 12668u;
+        if ((uint32_t)df[0].index >= len) {
+            df[0].index = 0;
+            CIAIndex(&CIAB);
+        }
+        return nativeLen[t] ? nativeTracks[(uint32_t)t * 0x4000u + (uint32_t)df[0].index++] : 0;
+    }
+#endif
 
 #ifdef PICO_BUILD
     // DF0/DF1 hold one track: the ADF's current one, or the empty drive's.
@@ -760,44 +793,11 @@ void floppyState(){
     CIAA.pra |= df[driveSelected].pra;
 }
 
-void floppySetState(){            //To be called when Writes to CIAB prb happen.
-    
-    static uint8_t PRB;
+// One selected drive's response to a CIAB PRB write (motor, step, side).
+static void floppyDriveState(uint8_t PRB){
 #ifndef PICO_BUILD
     static int count = 0;
 #endif
-    
-    PRB = CIAB.prb;
-    
-    switch (PRB & 0x78) {
-        case 0x78:
-            CIAA.pra &=0xC3;    //Need to take the Drives off the floppy bus.
-            return;
-            break;
-            
-        case 0x70:
-            driveSelected = 0;
-            break;
-
-        case 0x68:
-            driveSelected = 1;
-            break;
-
-        case 0x58:
-            driveSelected = 2;
-            break;
-
-        case 0x38:
-            driveSelected = 3;
-            break;
-            
-        default:
-            break;
-    }
-    //count++;
-
-    //printf("%d: ",count);
-    
     //ID mode... to identify external drives...
      // ID mode (frank-amiga): while the motor is off after an ID reload,
      // each selection shows the next ID bit on /RDY (drive present: 1s,
@@ -919,14 +919,48 @@ void floppySetState(){            //To be called when Writes to CIAB prb happen.
     
     
     df[driveSelected].prb = PRB;
+#ifdef PICO_BUILD
+    // A flux-image drive asks for the track under its head as soon as the
+    // head gets there (the master needs a moment to decode it).
+    if (driveSelected < FLOPPY_DISK_DRIVES && ext_mode[driveSelected] &&
+        df[driveSelected].hasDisk)
+        floppyEnsureTrackCached(driveSelected);
+#endif
     if (idBit)
         df[driveSelected].pra &= 0xDF;   // ID bit: /RDY low
     
-    //printf("\n");
-    CIAA.pra &= 0xC3;
-    CIAA.pra |= df[driveSelected].pra;
-    
-    //CIAB.prb |= df[driveSelected].prb & 0x87;
-    
+}
 
+void floppySetState(){            //To be called when Writes to CIAB prb happen.
+    const uint8_t PRB = CIAB.prb;
+    // frank-amiga: every drive whose /SELx is low takes the motor, step and
+    // side lines, and their status outputs are wired-OR (active low) on the
+    // bus. Loaders that wait for a disk "in any drive" select them all and
+    // step them together; stepping only one would leave DF0's /CHNG set.
+    const int sel = (~PRB >> 3) & 0xF;
+    if (!sel) {
+        CIAA.pra &=0xC3;    //Need to take the Drives off the floppy bus.
+        return;
+    }
+    if (!(sel & (sel - 1))) {
+        driveSelected = __builtin_ctz(sel);
+        floppyDriveState(PRB);
+        floppyState();
+        // No drive at that port: nothing pulls the status lines low (a
+        // trackloader polling DF1 would take /TK0 for an empty drive and
+        // wait on it for the next disk).
+        if (!drive_connected[driveSelected])
+            CIAA.pra |= 0x3C;
+        return;
+    }
+    uint8_t lines = 0x3C;
+    for (int d = 3; d >= 0; d--) {   // DF0 last: the lowest drive's data
+        if (!(sel & (1 << d))) continue;
+        driveSelected = d;
+        floppyDriveState(PRB);
+        if (drive_connected[d])
+            lines &= df[d].pra;
+    }
+    CIAA.pra &= 0xC3;
+    CIAA.pra |= lines & 0x3C;
 }
