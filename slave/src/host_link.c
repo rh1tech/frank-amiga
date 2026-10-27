@@ -253,7 +253,14 @@ static void __attribute__((noinline)) hostDirectSendPaletteWith(
     runFlush(); // the blocks before the change use the old palette
     uint32_t msg[2 + 16];
     uint32_t mask = 0, n = 0;
-    for (int i = 0; i < 32; ++i) {
+    // Only registers written since the last comparison can differ.
+    uint32_t check = core1_palette_valid ? paletteChanged : ~0u;
+    if (except >= 0)
+        check |= 1u << except;
+    paletteChanged = 0;
+    while (check) {
+        const int i = __builtin_ctz(check);
+        check &= check - 1u;
         const uint16_t c = i == except ? colour : (uint16_t)((&chipset.color00)[i] & 0xfffu);
         if (core1_palette_valid && c == core1_palette[i])
             continue;
@@ -647,6 +654,7 @@ int hostResetRequested;
 void host_state_restored(void) {
     row_layout[0] = row_layout[1] = ~0u;
     host_run.palette_sent = internal.paletteGeneration - 1u;
+    core1_palette_valid = false;
     dpf_row = -1;
     dpf_state = ~0u;
     dpf_next_x = -1000;

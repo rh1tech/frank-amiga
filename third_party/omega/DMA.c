@@ -1332,10 +1332,25 @@ void dma_run(int slots){
                 case 4: FETCH_PLANE(4); break;
                 case 5: FETCH_PLANE(5); break;
                 case 6: FETCH_PLANE(6); break;
-                default:
+                default: {
                     internal.hPos = x;
-                    table[x]();
+                    void (*const fn)() = table[x];
+                    if (fn == oddCycle) {
+                        // Only the blitter could use it.
+                        if (blitterState != 0 || (chipset.dmaconr & 0x4240) == 0x4240)
+                            oddCycle();
+                    } else if (fn == evenCycle && internal.copperCycle != 3 &&
+                               internal.copperCycle != 4 &&
+                               x != (lineLast > 0xE2 ? 0xE1 : 0xE0)) {
+                        // The executing Copper's slot (evenCycle(), with the
+                        // checks this branch already made).
+                        if (copperExecute() != 1)
+                            oddCycle();
+                    } else {
+                        fn();
+                    }
                     break;
+                }
                 }
                 ++x;
                 if (dmaLineStateDirty)

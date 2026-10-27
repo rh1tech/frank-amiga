@@ -111,6 +111,7 @@ uint32_t EHB2ARGB(uint16_t color){
 }
 
 volatile uint8_t paletteArgbDirty;
+uint32_t paletteChanged;
 
 // The ARGB palette from the colour registers (see setColour()).
 void paletteArgbSync(void) {
@@ -974,6 +975,7 @@ static void __attribute__((noinline)) COLOUR_FUNC(setColour)(unsigned n,
     // ARGB palette only feeds the rare fallback renderers, which rebuild it
     // (paletteArgbSync()).
     paletteArgbDirty = 1;
+    paletteChanged |= 1u << n;
 #else
     internal.palette[n] = OCS2ARGB(value);
     internal.palette[n + 32] = EHB2ARGB(value);
