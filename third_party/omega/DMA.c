@@ -845,6 +845,8 @@ static uint8_t slotRunEnd[SLOT_LAST + 1];
 // host), 2..6 for the slot of an enabled plane, which dma_run() fetches
 // inline; 0 for anything else (called through the slot table).
 static uint8_t slotPlane[SLOT_LAST + 1];
+#define SLOT_COPPER 7
+#define SLOT_BLITTER 8
 // frank-amiga: while the Copper executes (so every even slot may be its)
 // and the blitter is idle, an odd slot that is not active only offers
 // itself to the blitter and does nothing. slotCopperNext[h] is the first
@@ -930,6 +932,10 @@ static void slotNextUpdate(void) {
             if (plane > 1 && !((internal.bitplaneMask >> (plane - 1)) & 1))
                 plane = 0;  // disabled: its slot is inactive anyway
         }
+        // frank-amiga: 7/8 for a slot that only offers itself to the
+        // Copper / the blitter (dmaCopperRun()).
+        if (!plane)
+            plane = f == evenCycle ? SLOT_COPPER : f == oddCycle ? SLOT_BLITTER : 0;
         slotPlane[h] = (uint8_t)plane;
     }
 }
@@ -1222,6 +1228,107 @@ static inline int dmaCopperStep(int x, int end) {
     const int next = slotCopperNext[x + 1];
     return next < end ? next : end;
 }
+#ifndef OMEGA_NO_COPPER_FAST
+static int copperSkipPending, copperSkip, copperJumpList;   // see evenCycle()
+
+// frank-amiga: the Copper's fast path. While it executes (not waiting, not
+// frozen), dma_run() runs the rest of the line here, slot by slot as the
+// slow path would but without its per-slot bookkeeping (E clock, beam once
+// for the run): plane fetches inline, the odd slots only the blitter could
+// use skipped while it is idle (slotCopperNext[]), and the Copper's own
+// slots taking its two common steps inline (a first word; the second word
+// of a MOVE to a register it may write). Anything else (WAIT, SKIP,
+// COPJMP, a skip pending, the refused slot) goes through evenCycle(). A
+// register write that changes the line's layout, or the Copper stopping,
+// ends the run. Returns 0 to leave the slot to the slow path.
+static int dmaCopperRun(int *slots, int *beamV, int *beamH) {
+    const int h = internal.hPos;
+    int end = h + *slots + 1;
+    if (end > lineLast)
+        end = lineLast;                 // the line end runs in the slow path
+    if (end <= h + 1)
+        return 0;
+    void (**table)() = slotTable;
+    const int hires = (chipset.bplcon0 & 0x8000) != 0;
+    const int refused = lineLast > 0xE2 ? 0xE1 : 0xE0;
+    const uint32_t clock0 = dmaSlotClock;
+    int x = h;
+    while (x < end) {
+        dmaSlotClock = clock0 + (uint32_t)(x - h);   // blit deadlines
+        internal.hPos = x;
+        switch (slotPlane[x]) {
+        case 1:
+            if (hires)
+                hiresPlane1Fetch();
+            else
+                loresPlane1Fetch();
+            break;
+        case 2: FETCH_PLANE(2); break;
+        case 3: FETCH_PLANE(3); break;
+        case 4: FETCH_PLANE(4); break;
+        case 5: FETCH_PLANE(5); break;
+        case 6: FETCH_PLANE(6); break;
+        case SLOT_COPPER: {
+            const int cycle = internal.copperCycle;
+            if (x == refused || (chipset.dmaconr & 0x280) != 0x280) {
+                evenCycle();
+            } else if (cycle == 0 && !copperSkipPending) {
+                // First word (copperExecute() state 0).
+                uint16_t w = CHIPW(internal.copperPC);
+                w = (uint16_t)((w << 8) | (w >> 8));
+                internal.IR1 = w;
+                internal.copperPC += 1;
+                internal.copperCycle = (w & 1) ? 2 : 1;
+            } else if (cycle == 1 && !copperSkip &&
+                       ((internal.IR1 >> 1) & 255) >= 0x40 &&
+                       ((internal.IR1 >> 1) & 255) != 0x44 &&
+                       ((internal.IR1 >> 1) & 255) != 0x45) {
+                // A MOVE's second word and its write (state 1).
+                const unsigned reg = (internal.IR1 >> 1) & 255;
+                uint16_t v = CHIPW(internal.copperPC);
+                internal.copperPC += 1;
+                v = (uint16_t)((v << 8) | (v >> 8));
+                internal.IR1 = (uint16_t)reg;
+                internal.IR2 = v;
+                debugChipAddress = (int)reg;
+                debugChipValue = v;
+                internal.copperCycle = 0;
+                if (reg - 0xC0u < 32u)
+                    setColour(reg - 0xC0u, v);
+                else
+                    putChipReg16[reg](v);
+            } else {
+                evenCycle();
+            }
+            break;
+        }
+        case SLOT_BLITTER:
+            if (blitterState != 0 || (chipset.dmaconr & 0x4240) == 0x4240)
+                oddCycle();
+            break;
+        default:
+            table[x]();
+            break;
+        }
+        if (x == bitplaneLine.lastCycle)
+            dmaFetchWindowComplete();
+        x = dmaCopperStep(x, end);
+        if (dmaLineStateDirty || internal.copperCycle == 3 ||
+            internal.copperCycle == 4 || (chipset.dmaconr & 0x280) != 0x280)
+            break;
+    }
+    dmaSlotClock = clock0;
+    const int k = x - h;
+    DSTAT(dma_stat_batched, (uint32_t)k);
+    internal.hPos = x;
+    *slots -= k - 1;
+    *beamV = internal.vPos;
+    *beamH = x - 1;
+    dmaEClock(k);
+    return 1;
+}
+#endif
+
 void dma_run(int slots){
     int beamV = -1, beamH = 0;  // last slot run
     while (slots-- > 0) {
@@ -1304,7 +1411,13 @@ void dma_run(int slots){
                     continue;
                 }
             }
-        } else if (slotRunEnd[internal.hPos] > internal.hPos + 1) {
+        }
+#ifndef OMEGA_NO_COPPER_FAST
+        else if (dmaCopperRun(&slots, &beamV, &beamH)) {
+            continue;
+        }
+#else
+        else if (slotRunEnd[internal.hPos] > internal.hPos + 1) {
             // frank-amiga: the Copper executes inside the fetch window. Run
             // the window's slots back to back as above, but every one of
             // them (the Copper takes the even free slots, the blitter the
@@ -1439,6 +1552,7 @@ void dma_run(int slots){
                 continue;
             }
         }
+#endif
 #endif
 
         // SDL_AtomicSet(&cpuWait, 1); // single-threaded on RP2350
