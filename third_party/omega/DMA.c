@@ -1167,7 +1167,11 @@ static inline void loresPlane1Fetch(void);
     } while (0)
 
 // Advances the E clock by k slots: it ticks every fifth slot.
+// frank-amiga: slots run since reset (blit end deadlines, see blitTime).
+uint32_t dmaSlotClock;
+
 static inline void dmaEClock(int k) {
+    dmaSlotClock += (uint32_t)k;
     const int counter = internal.eClockCounter - k;
     if (counter < 0) {
         const int ticks = (4 - counter) / 5;
@@ -1277,6 +1281,7 @@ void dma_run(int slots){
 
         // CIA timers: the E clock ticks every fifth slot (eclock_execute(),
         // inlined; see CIAClock()).
+        dmaSlotClock++;
         if (--internal.eClockCounter < 0) {
             internal.eClockCounter = 4;
             CIAClock(1);
@@ -1335,6 +1340,10 @@ void evenCycle(void){
 }
 
 static int blitterState = 0;
+// frank-amiga: state 3 (a computed blit waiting out its duration) ends when
+// dmaSlotClock reaches this; meanwhile the blitter does nothing, so idle
+// slots may be skipped up to it.
+static uint32_t blitDeadline;
 
 void oddCycle(void){
     
@@ -1363,7 +1372,8 @@ static inline void freeCycle(void) {
 // any doubt returns hPos (no skip).
 static int __attribute__((noinline)) dmaIdleCompute(int limit) {
     const int h = internal.hPos;
-    if (blitterState != 0 || (chipset.dmaconr & 0x4240) == 0x4240)
+    if (blitterState != 3 &&
+        (blitterState != 0 || (chipset.dmaconr & 0x4240) == 0x4240))
         return h;
     if ((chipset.dmaconr & 0x280) != 0x280 || internal.copperCycle == 4)
         return limit;
@@ -1407,8 +1417,16 @@ static inline __attribute__((always_inline)) int dmaIdleUntil(int limit) {
     // a couple of loads, as dmaIdleCompute() would. Through the cache they
     // cost a refresh on every slot (~23 % of the CPU in State of the Art's
     // blitter-heavy part).
-    if (blitterState != 0 || (chipset.dmaconr & 0x4240) == 0x4240)
+    if (blitterState == 3) {
+        // Only the blit's end is due: run up to it.
+        const int32_t rem = (int32_t)(blitDeadline - dmaSlotClock);
+        if (rem <= 0)
+            return internal.hPos;
+        if (internal.hPos + rem < limit)
+            limit = internal.hPos + rem;
+    } else if (blitterState != 0 || (chipset.dmaconr & 0x4240) == 0x4240) {
         return internal.hPos;
+    }
     if ((chipset.dmaconr & 0x280) == 0x280 && internal.copperCycle != 4 &&
         internal.copperCycle != 3)
         return internal.hPos;
@@ -2150,8 +2168,8 @@ int copperExecute(){
 
 
 
-// frank-amiga: the running blit's remaining time, in colour clocks
-// (state 3: computed, waiting to end).
+// frank-amiga: the running blit's duration in colour clocks (> 0 while it
+// is deferred; its end is blitDeadline on dmaSlotClock).
 static int32_t blitTime;
 
 static int32_t blitEstimate(void) {
@@ -2185,16 +2203,17 @@ int blitterExecute(){
     
     int state = blitterState;
     if (state == 3) {
-        // Free odd slots stand for the even ones the blitter shares too.
-        blitTime -= 2;
-        if (blitTime <= 0) {
+        if ((int32_t)(dmaSlotClock - blitDeadline) >= 0) {
+            blitTime = 0;
             blitterState = 0;
             blitEnd();
         }
         return 0;
     }
-    if (state == 0 && (chipset.dmaconr & 0x4240) == 0x4240)
+    if (state == 0 && (chipset.dmaconr & 0x4240) == 0x4240) {
         blitTime = blitEstimate();
+        blitDeadline = dmaSlotClock + (uint32_t)blitTime;
+    }
     
     
     switch(state){
