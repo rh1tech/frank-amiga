@@ -1205,6 +1205,10 @@ void dma_run(int slots){
         // fetch runs back to back (see slotRunEnd[]).
         // -DOMEGA_NO_SLOT_SKIP disables both (A/B comparisons).
 #ifndef OMEGA_NO_SLOT_SKIP
+        // frank-amiga: an executing Copper (not waiting, not frozen) makes
+        // dmaIdleUntil() answer "here" for every slot; skip the lookups.
+        if ((chipset.dmaconr & 0x280) != 0x280 || internal.copperCycle == 4 ||
+            internal.copperCycle == 3)
         {
             const int h = internal.hPos;
             int end = slotRunEnd[h];
