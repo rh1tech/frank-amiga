@@ -58,7 +58,10 @@ static bool chunk_valid(const link_stream_hdr_t *h) {
     return (x ^ h->seq) == h->check;
 }
 
+bool stream_last_full;   /* the last chunk was full: the slave has more */
+
 bool stream_poll(void) {
+    stream_last_full = false;
     if (!running || denise_ring_space() < LINK_STREAM_PAYLOAD_WORDS)
         return false;
     if (denise_resync_request) {
@@ -103,5 +106,8 @@ bool stream_poll(void) {
         denise_ring_put(payload + start, words - start);
     stream_stats.chunks++;
     stream_stats.words += words - start;
+    /* The slave packs whole messages, so a chunk with more queued behind it
+     * is nearly, not exactly, full. */
+    stream_last_full = words >= LINK_STREAM_PAYLOAD_WORDS * 7u / 8u;
     return true;
 }

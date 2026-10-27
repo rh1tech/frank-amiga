@@ -21,6 +21,8 @@ void stream_start(void);
 void stream_stop(void);
 /* Pull at most one chunk; call from the main loop. True if one arrived. */
 bool stream_poll(void);
+/* The last chunk stream_poll() took was full: the slave has more queued. */
+extern bool stream_last_full;
 /* Queue an input event for the next request (link_stream.h LINK_EV_*). */
 bool stream_input(uint8_t type, uint8_t a, uint8_t b, uint8_t c);
 

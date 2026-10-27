@@ -399,7 +399,15 @@ static void main_poll(void) {
     if (amiga_running) {
         usb_amiga_poll();
         input_poll();
-        stream_poll();
+        /* While chunks come full the slave has more queued: take several in
+         * a row. The console waits up to 1 ms for a character between
+         * passes, so one chunk a pass capped the stream at ~1000 chunks/s,
+         * below what copper-heavy frames need (State of the Art's chunky
+         * part: ~1430/s at 50 fps). */
+        const uint64_t t0 = time_us_64();
+        for (int n = 0; n < 8 && stream_poll() && stream_last_full &&
+                        time_us_64() - t0 < 3000u; n++) {
+        }
         media_poll();
     } else {
         bringup_poll();
