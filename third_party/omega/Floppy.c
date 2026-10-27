@@ -16,6 +16,7 @@
 #include "Floppy.h"
 #include "Chipset.h"
 #include "Memory.h"
+#include "DMA.h"
 #include <string.h>
 
 #ifndef PICO_BUILD
@@ -437,6 +438,8 @@ static volatile int ext_mode[FLOPPY_DISK_DRIVES];
 static volatile int ext_want[FLOPPY_DISK_DRIVES] = { -1, -1 };
 static volatile int ext_have[FLOPPY_DISK_DRIVES] = { -1, -1 };
 static volatile uint32_t ext_len[FLOPPY_DISK_DRIVES];
+static uint16_t timedCells[FLOPPY_DISK_DRIVES][512];     /* see floppyWordDue() */
+static volatile int timedCount[FLOPPY_DISK_DRIVES];
 
 static int floppyEnsureTrackCached(int drive) {
     if (drive < FLOPPY_DISK_DRIVES && ext_mode[drive]) {
@@ -494,8 +497,11 @@ int floppyTrackWanted(int *drive, int *track) {
 
 uint8_t *floppyTrackBuffer(int drive) { return drive_track_cache(drive); }
 
-void floppyTrackLoaded(int drive, int track, uint32_t len) {
+void floppyTrackLoaded(int drive, int track, uint32_t len, const uint16_t *cells, int ncells) {
     ext_len[drive] = len < 1000u ? 12668u : len;
+    if (ncells > 512) ncells = 512;
+    if (ncells > 0) memcpy(timedCells[drive], cells, (size_t)ncells * 2u);
+    timedCount[drive] = ncells > 0 ? ncells : 0;
     __atomic_store_n(&ext_have[drive], track, __ATOMIC_RELEASE);
 }
 
@@ -625,19 +631,185 @@ void floppyWriteByte(uint8_t b) { (void)b; }
 void floppyWriteDone(void) {}
 void floppyWriteAbort(void) {}
 #endif
+#ifdef FRANK_DSK_SUM
+// Debug: a checksum of the words each disk DMA read stores, printed when it
+// completes (compare the board with the native build).
+uint32_t frankDskSum;
+static int dskSumN;
+void frankDskDone(void) {
+    if (dskSumN++ < 400)
+        printf("DSKSUM %d cyl %d side %d sum %08lx\n", dskSumN, df[driveSelected].cylinder,
+               df[driveSelected].side, (unsigned long)frankDskSum);
+    frankDskSum = 0;
+}
+#endif
 volatile uint8_t floppyDirty[2];
 volatile uint8_t floppyDirtyTracks[2][20];
+
+#ifndef PICO_BUILD
+// frank-amiga native: DF0 from raw MFM tracks (the master's flux decoding,
+// dumped over SWD): track t at nativeTracks + t * 16 KB, nativeLen[t] bytes,
+// a timed track's cells 14 KB on (nativeTiming[t] entries).
+static const uint8_t *nativeTracks;
+static uint32_t nativeLen[168];
+static uint16_t nativeTiming[168];
+void floppyNativeTracks(const uint8_t *tracks, const uint32_t *len, const uint32_t *timing) {
+    nativeTracks = tracks;
+    memcpy(nativeLen, len, sizeof nativeLen);
+    for (int t = 0; t < 168; t++) nativeTiming[t] = timing ? (uint16_t)timing[t] : 0;
+}
+#endif
+
+// frank-amiga: timed tracks. A flux image whose bit cells vary along a
+// track (a copy protection's sector written at another rate, which it then
+// times, as Rob Northen Copylock does) comes with the cells' length per
+// 256-bit block. Such a track turns at its real speed: floppyLineTick()
+// runs a clock, and disk DMA takes words only as the disk would deliver
+// them (floppyWordDue()). Every other track reads as fast as DMA asks.
+static int32_t timedCreditNs;
+#ifdef PICO_BUILD
+static const uint16_t *timedTable(int d, int *n) {
+    if (d >= FLOPPY_DISK_DRIVES || !ext_mode[d] || !timedCount[d] ||
+        ext_have[d] != df[d].cylinder * 2 + df[d].side)
+        return NULL;
+    *n = timedCount[d];
+    return timedCells[d];
+}
+static uint32_t timedLength(int d) { return ext_len[d]; }
+#else
+static const uint16_t *timedTable(int d, int *n) {
+    if (d != 0 || !nativeTracks) return NULL;
+    const int t = df[0].cylinder * 2 + df[0].side;
+    if (!nativeTiming[t]) return NULL;
+    *n = nativeTiming[t] < 512 ? nativeTiming[t] : 512;
+    return (const uint16_t *)(nativeTracks + (uint32_t)t * 0x4000u + 0x3800u);
+}
+static uint32_t timedLength(int d) {
+    (void)d;
+    const int t = df[0].cylinder * 2 + df[0].side;
+    return nativeLen[t] ? nativeLen[t] : 12668u;
+}
+#endif
+
+static inline int32_t timedCell(const uint16_t *tab, int n, uint32_t byte) {
+    uint32_t b = byte >> 5;              /* 256-bit blocks */
+    if (b >= (uint32_t)n) b = (uint32_t)n - 1u;
+    return tab[b];
+}
+
+int floppyWordDue(void) {
+    int n;
+    const uint16_t *tab = timedTable(driveSelected, &n);
+    if (!tab) return 1;
+    const int32_t need = 16 * timedCell(tab, n, (uint32_t)df[driveSelected].index);
+    if (timedCreditNs < need) {
+        return 0;
+    }
+    timedCreditNs -= need;
+    return 1;
+}
+
+// frank-amiga: DSKBYTR. On a timed track the head's bit position is worked
+// out from the line clock and the beam's place on the line (a colour clock is
+// ~282 ns), so a program polling WORDEQUAL with disk DMA off sees each sync
+// word go by (Copylock times them with a CIA). WORDEQUAL is reported if the
+// sync passed since the last read, the low byte is the one under the head.
+// Other tracks keep the word-sync flag disk DMA leaves.
+static const uint8_t *timedBits(int d) {
+#ifdef PICO_BUILD
+    return drive_track_cache(d);
+#else
+    (void)d;
+    return nativeTracks + (uint32_t)(df[0].cylinder * 2 + df[0].side) * 0x4000u;
+#endif
+}
+
+uint16_t floppyByteReg(void) {
+    const int d = driveSelected;
+    int n;
+    const uint16_t *tab = timedTable(d, &n);
+    const uint16_t dmaon = (chipset.dsklen & 0x8000) && (chipset.dmaconr & 0x210) == 0x210 ? 0x4000 : 0;
+    if (!tab || !df[d].hasDisk)
+        return (uint16_t)((chipset.dskbytr & ~0x4000) | dmaon);
+    /* Bit positions on the track: `pos` is under the head now; bytes end on
+     * the grid of the last sync seen (as Paula's byte counter restarts
+     * there), and each one is "ready" once, until DSKBYTR is read. */
+    static uint32_t lastPos, syncEnd, lastByteEnd;
+    const uint8_t *bits = timedBits(d);
+    const uint32_t total = timedLength(d) * 8u;
+    const int32_t cell = timedCell(tab, n, (uint32_t)df[d].index);
+    uint32_t pos = (uint32_t)df[d].index * 8u +
+                   (uint32_t)((timedCreditNs + internal.hPos * 282) / (cell ? cell : 2000));
+    pos %= total;
+    const uint32_t from = lastPos <= pos && pos - lastPos <= 256u ? lastPos : (pos >= 256u ? pos - 256u : 0u);
+    lastPos = pos;
+    uint16_t r = dmaon;
+    uint32_t w = 0;
+    for (uint32_t p = from >= 15u ? from - 15u : 0u; p < pos; p++) {
+        w = (w << 1 | ((bits[p >> 3] >> (7 - (p & 7))) & 1u)) & 0xFFFFu;
+        if (p >= from && p >= 15u && w == chipset.dsksync) {
+            r |= 0x1000;                 /* WORDEQUAL */
+            syncEnd = p + 1u;
+        }
+    }
+    const uint32_t off = (pos + 8u - syncEnd % 8u) % 8u;
+    const uint32_t byteEnd = pos >= off ? pos - off : 0u;
+    if (lastByteEnd > total) lastByteEnd = 0;
+    if (byteEnd != lastByteEnd && byteEnd >= 8u) {
+        lastByteEnd = byteEnd;
+        r |= 0x8000;                     /* BYTEREADY */
+    }
+    uint32_t byte = 0;
+    for (uint32_t p = lastByteEnd >= 8u ? lastByteEnd - 8u : 0u; p < lastByteEnd; p++)
+        byte = byte << 1 | ((bits[p >> 3] >> (7 - (p & 7))) & 1u);
+    return (uint16_t)(r | (byte & 0xFF));
+}
 
 // frank-amiga: a spinning disk pulses /INDEX once a revolution (300 rpm:
 // every 0.2 s, 3125 PAL lines) whether or not disk DMA reads it; loaders
 // wait for it with DMA off (Humans 2 polls CIA-B's FLG). DMA reads keep
 // their own pulse at the track's end (floppyDataRead()), so this one only
-// runs while no disk DMA is active (or DMA waits for a flux track).
+// runs while no disk DMA is active (or DMA waits for a flux track). A timed
+// track instead turns under the head line by line, its index at its start.
 void floppyLineTick(void) {
     static int lines;
-    const Fd_t *d = &df[driveSelected];
-    if (!d->hasDisk || (d->prb & 0x80) ||
-        ((chipset.dsklen & 0x8000) && floppyDataReady())) {
+    Fd_t *d = &df[driveSelected];
+    if (!d->hasDisk || (d->prb & 0x80)) {
+        return;
+    }
+    int n;
+    const uint16_t *tab = timedTable(driveSelected, &n);
+    if (tab) {
+        timedCreditNs += 64000;          /* a PAL line */
+        const int dmaReads = (chipset.dmaconr & 0x210) && (chipset.dsklen & 0x8000) &&
+                             (chipset.dsklen & 0x3FFF) && !(chipset.dsklen & 0x4000);
+        if (!dmaReads) {
+            const uint32_t len = timedLength(driveSelected);
+            /* Paula sees the sync word go by with or without DMA. */
+            static uint32_t window;
+            const uint8_t *bits = timedBits(driveSelected);
+            d->index &= ~1;              /* whole words, as disk DMA reads them */
+            for (;;) {
+                const int32_t need = 16 * timedCell(tab, n, (uint32_t)d->index);
+                if (timedCreditNs < need) break;
+                timedCreditNs -= need;
+                const uint32_t word = (uint32_t)bits[d->index] << 8 | bits[d->index + 1];
+                for (int k = 15; k >= 0; k--) {
+                    window = window << 1 | ((word >> k) & 1u);
+                    if ((window & 0xFFFFu) == chipset.dsksync)
+                        putChipReg16[INTREQ](0x9000);   /* DSKSYNC */
+                }
+                d->index += 2;
+                if ((uint32_t)d->index >= len) {
+                    d->index = 0;
+                    CIAIndex(&CIAB);
+                }
+            }
+        }
+        if (timedCreditNs > 128000) timedCreditNs = 128000;
+        return;
+    }
+    if ((chipset.dsklen & 0x8000) && floppyDataReady()) {
         return;
     }
     if (++lines >= 3125) {
@@ -652,16 +824,6 @@ void floppyIndexReset(){
     
 }
 
-#ifndef PICO_BUILD
-// frank-amiga native: DF0 from raw MFM tracks (the master's flux decoding,
-// dumped over SWD): track t at nativeTracks + t * 16 KB, nativeLen[t] bytes.
-static const uint8_t *nativeTracks;
-static uint32_t nativeLen[168];
-void floppyNativeTracks(const uint8_t *tracks, const uint32_t *len) {
-    nativeTracks = tracks;
-    memcpy(nativeLen, len, sizeof nativeLen);
-}
-#endif
 
 uint8_t floppyDataRead(){ //this function should be called by the DMA
 #ifndef PICO_BUILD

@@ -97,7 +97,7 @@
 
 /* If ON, the CPU will monitor the trace flags and take trace exceptions
  */
-#define M68K_EMULATE_TRACE          OPT_OFF
+#define M68K_EMULATE_TRACE          OPT_ON  // frank-amiga: Rob Northen Copylock decrypts itself from the trace handler
 
 
 /* If ON, CPU will call the output reset callback when it encounters a reset

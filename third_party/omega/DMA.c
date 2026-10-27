@@ -1469,6 +1469,8 @@ void dramCycle(void){
 }
 
 int turboFloppy = 8;    //8 for turbo
+uint64_t floppyBits;    // frank-amiga: the last bits read off the disk (diskCycle)
+int floppyPhase;        // the sync's bit offset in them, which the words keep
 
 void diskCycle(void){
     
@@ -1499,51 +1501,57 @@ void diskCycle(void){
 
             // frank-amiga: without ADKCON WORDSYNC the transfer starts at
             // once instead of at the next sync word.
-            if (!(chipset.adkconr & 0x400))
+            if (!(chipset.adkconr & 0x400) && !floppySync) {
                 floppySync = 1;
-            
-            //OS2+ Disk loading
-            
+                floppyPhase = 0;
+            }
+
+            // frank-amiga: Paula finds the sync word at any bit position, and
+            // the words after it keep that alignment (custom formats and
+            // protections such as Rob Northen Copylock place sync words off
+            // the 16-bit grid). The bits stream through a window; while
+            // waiting, each new word's 16 bit phases are compared.
             for(int i=0;i<turboFloppy;++i){
-                
-                if(chipset.adkconr & 0x400){
-                    //printf("Needs a disk sync");
-                    //sync = 0;
-                }
-            
-                uint8_t b1 = floppyDataRead();
-                uint8_t b2 = floppyDataRead();
+                if (!floppyWordDue())
+                    return;     // frank-amiga: a timed track's next word is not under the head yet
+                const uint8_t b1 = floppyDataRead();
+                const uint8_t b2 = floppyDataRead();
+                floppyBits = floppyBits << 16 | (uint32_t)(b1 << 8 | b2);
 
-                uint16_t syncword = b1 << 8 | b2;
-
-                if(syncword==chipset.dsksync){
-                
+                int found = -1;
+                const uint32_t sync = chipset.dsksync;
+                for (int k = 15; k >= 0; k--)
+                    if (((floppyBits >> k) & 0xFFFFu) == sync) { found = k; break; }
+                if (found >= 0) {
                     putChipReg16[INTREQ](0x9000);   //DSKSYNC INT
                     chipset.dskbytr |= 0x1000;  // set word sync bit
-                
-                    if(floppySync==0){
-                        floppySync=1;
-                        return;
+                    if (!floppySync) {
+                        floppySync = 1;
+                        floppyPhase = found;
+                        continue;               // the data starts after it
                     }
                 }
-                
-                if(floppySync == 1){
-                    
-                    //chipset.dskbytr &= 0xEFFF;      //clear word sync
-                    *chip_ptr(chipset.dskpt & CHIPTOP) = b1;
+
+                if (floppySync) {
+                    const uint16_t word = (uint16_t)(floppyBits >> floppyPhase);
+#ifdef FRANK_DSK_SUM
+                    { extern uint32_t frankDskSum; frankDskSum = frankDskSum * 31u + word; }
+#endif
+                    *chip_ptr(chipset.dskpt & CHIPTOP) = (uint8_t)(word >> 8);
+                    chipset.dskpt += 1;
+                    *chip_ptr(chipset.dskpt & CHIPTOP) = (uint8_t)word;
                     chipset.dskpt += 1;
 
-                    *chip_ptr(chipset.dskpt & CHIPTOP) = b2;
-                    chipset.dskpt += 1;
-                
                     chipset.dsklen -= 1;
-                
+
                     if( (chipset.dsklen & 0x3FFF) == 0){
+#ifdef FRANK_DSK_SUM
+                        { extern uint32_t frankDskSum; extern void frankDskDone(void); frankDskDone(); }
+#endif
                         putChipReg16[INTREQ](0x8002);   //Disk block loaded INT
                         floppySync = 0;
                         return;
                     }
-                
                 }
             }
             

@@ -67,7 +67,7 @@ void floppyConnect(int drive);
 int floppyMountExternal(int drive);
 int floppyTrackWanted(int *drive, int *track);
 uint8_t *floppyTrackBuffer(int drive);
-void floppyTrackLoaded(int drive, int track, uint32_t len);
+void floppyTrackLoaded(int drive, int track, uint32_t len, const uint16_t *cells, int ncells);
 // frank-amiga: disk writes (DSKLEN WRITE). Bytes of the written MFM stream,
 // then the end of the transfer: its sectors go into the selected drive's
 // ADF, which becomes dirty (floppyDirty, for the master to save).
@@ -82,6 +82,8 @@ void floppyIndexReset();
 // frank-amiga: once a raster line (DMA.c): the free-running index pulse.
 void floppyLineTick(void);
 int floppyDataReady(void);
+int floppyWordDue(void);
+uint16_t floppyByteReg(void);
 
 void floppyState();     //Get the drive state for the CIA
 void floppySetState();  //Set the Drive State for the CIA

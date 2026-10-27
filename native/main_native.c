@@ -77,6 +77,40 @@ static uint32_t native_read_u32(uint32_t address) {
 
 int screenWidth  = 640;   // referenced by some omega translation units
 int screenHeight = 200;
+#ifdef FRANK_PC_RING
+// frank-amiga native debug (EXTRA_CFLAGS=-DFRANK_PC_RING): the last 4096
+// instruction PCs; when the CPU first runs below 0x400 (a crash into the
+// vectors) they are printed, disassembled.
+static unsigned pcRing[4096], pcRingPos;
+void frankPcRing(unsigned pc) {
+    static int done;
+    pc &= 0xFFFFFFu;
+    pcRing[pcRingPos++ & 4095u] = pc;
+    extern unsigned long native_frame_counter;
+    static long at = -2;
+    if (at == -2) { const char *e = getenv("OMEGA_RING_AT"); at = e ? atol(e) : -1; }
+    static long atPc = -2;
+    if (atPc == -2) { const char *e = getenv("OMEGA_RING_PC"); atPc = e ? strtol(e, NULL, 16) : -1; }
+    static long post = -2;
+    if (post == -2) { const char *e = getenv("OMEGA_RING_POST"); post = e ? atol(e) : 0; }
+    static long left = -1;      // instructions still to record after the trigger
+    if (!done && left < 0 && (pc < 0x400u || (at >= 0 && (long)native_frame_counter >= at &&
+                                              (atPc < 0 || pc == (unsigned)atPc))))
+        left = post;
+    if (!done && left >= 0 && left-- == 0) {
+        done = 1;
+        printf("PC RING (vbl %lu):\n", native_frame_counter);
+        char buf[128];
+        for (unsigned i = pcRingPos - 300u; i != pcRingPos; i++) {
+            const unsigned a = pcRing[i & 4095u];
+            m68k_disassemble(buf, a, M68K_CPU_TYPE_68000);
+            printf("  %06x %s\n", a, buf);
+        }
+        for (int r = M68K_REG_D0; r <= M68K_REG_A7; r++) printf(" %08x", m68k_get_reg(NULL, r));
+        printf("\n");
+    }
+}
+#endif
 int disass       = 0;     // Musashi disassembler (toggled by OMEGA_DISASM)
 
 // Load a Kickstart ROM file into low16Meg at 0xF80000. Images no larger than
@@ -255,16 +289,16 @@ int main(int argc, char **argv) {
         const char *dir = getenv("OMEGA_DF0_TRACKS");
         if (dir) {
             static uint8_t tracks[168 * 0x4000];
-            static uint32_t len[168];
+            static uint32_t len[2 * 168];       // lengths, then timing (entries | spread << 16)
             char p[600];
             snprintf(p, sizeof p, "%s/len.bin", dir);
             FILE *f = fopen(p, "rb");
-            if (f) { fread(len, 4, 168, f); fclose(f); }
+            if (f) { fread(len, 4, 2 * 168, f); fclose(f); }
             snprintf(p, sizeof p, "%s/trk.bin", dir);
             f = fopen(p, "rb");
             if (f) { fread(tracks, 1, sizeof tracks, f); fclose(f); }
-            extern void floppyNativeTracks(const uint8_t *, const uint32_t *);
-            floppyNativeTracks(tracks, len);
+            extern void floppyNativeTracks(const uint8_t *, const uint32_t *, const uint32_t *);
+            floppyNativeTracks(tracks, len, len + 168);
             printf("DF0: raw MFM tracks from %s\n", dir);
         }
     }
@@ -475,7 +509,9 @@ int main(int argc, char **argv) {
                 swapAt = -1;
                 if (e && sscanf(e, "%ld:%511s", &swapAt, swapPath) != 2) swapAt = -1;
             }
-            if (swapAt >= 0 && (long)native_frame_counter == swapAt && df[0].hasDisk) {
+            static int swapEjected;
+            if (swapAt >= 0 && !swapEjected && (long)native_frame_counter == swapAt && df[0].hasDisk) {
+                swapEjected = 1;
                 floppyInsert(0);                      /* toggles: eject */
                 printf("  vbl=%lu DF0 ejected\n", native_frame_counter);
             }
@@ -487,13 +523,13 @@ int main(int argc, char **argv) {
                 FILE *lf = fopen(lp, "rb");
                 if (lf) {
                     static uint8_t tracks[168 * 0x4000];
-                    static uint32_t len[168];
-                    fread(len, 4, 168, lf);
+                    static uint32_t len[2 * 168];
+                    fread(len, 4, 2 * 168, lf);
                     fclose(lf);
                     snprintf(lp, sizeof lp, "%s/trk.bin", swapPath);
                     if ((lf = fopen(lp, "rb"))) { fread(tracks, 1, sizeof tracks, lf); fclose(lf); }
-                    extern void floppyNativeTracks(const uint8_t *, const uint32_t *);
-                    floppyNativeTracks(tracks, len);
+                    extern void floppyNativeTracks(const uint8_t *, const uint32_t *, const uint32_t *);
+                    floppyNativeTracks(tracks, len, len + 168);
                     floppyInsert(0);
                     printf("  vbl=%lu DF0 inserted tracks %s\n", native_frame_counter, swapPath);
                     swapAt = -1;
@@ -516,6 +552,7 @@ int main(int argc, char **argv) {
             (it % 200) == 0) {
             floppyInsert(0);
             if (df[0].hasDisk) {
+                insertAt = 0;   // frank-amiga: once (OMEGA_DF0_SWAP ejects it later)
                 printf("  it=%6ld  disk inserted (idMode=%d)\n",
                        it, df[0].idMode);
                 fflush(stdout);

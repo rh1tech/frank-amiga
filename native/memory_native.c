@@ -12,6 +12,7 @@
 //  Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed
 //  with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#include <stdlib.h>
 #include "Memory.h"
 //#include "Kick13.h"
 #include "Chipset.h"
@@ -373,6 +374,10 @@ unsigned int chipReadLong(unsigned int address){
     
     //RAM - Incomplete address decding means chip addresses below 2meg wrap around
     address &= nativeChipMask;
+    // frank-amiga: a long access is two word accesses; across the end of
+    // chip RAM the second one wraps (the slave splits at every bank edge).
+    if (address + 2u > nativeChipMask)
+        return chipReadWord(address) << 16 | chipReadWord((address + 2u) & nativeChipMask);
     
     //return READ_LONG(chipset.chipram,address);
     uint32_t value = *(uint32_t*)&low16Meg[address];
@@ -381,7 +386,29 @@ unsigned int chipReadLong(unsigned int address){
 }
 
 static int sig_byte_hook_count = 0;
-void chipWriteByte(unsigned int address,unsigned int value){   //ROM
+// frank-amiga native: OMEGA_WATCH=<hex lo>[-<hex hi>] logs CPU writes into
+// that range (chip RAM offsets, mirrors folded), the first per writing PC.
+static void watchWrite(unsigned address, unsigned size, unsigned value) {
+    static long lo = -2, hi;
+    static unsigned pcs[256], npcs;
+    if (lo == -2) {
+        const char *e = getenv("OMEGA_WATCH");
+        lo = -1;
+        if (e) { char *n; lo = strtol(e, &n, 16); hi = *n == '-' ? strtol(n + 1, NULL, 16) : lo; }
+    }
+    if (lo < 0) return;
+    unsigned a = address < 0x200000u ? (address & nativeChipMask) : address;
+    if (a + size <= (unsigned)lo || a > (unsigned)hi) return;
+    const unsigned pc = m68k_get_reg(NULL, M68K_REG_PPC) & 0xffffff;
+    for (unsigned i = 0; i < npcs; i++) if (pcs[i] == pc) return;
+    if (npcs < 256) pcs[npcs++] = pc;
+    extern unsigned long native_frame_counter;
+    printf("  vbl=%lu WATCH %06x.%u = %0*x  PC=%06x\n", native_frame_counter, address, size,
+           (int)size * 2, value, pc);
+}
+
+void chipWriteByte(unsigned int address,unsigned int value){
+    watchWrite(address & 0xffffff, 1, value & 0xff);   //ROM
     // Catch any byte write into tc_SigRecvd (0xC00C22..0xC00C25)
     if (address >= 0xC00C22u && address <= 0xC00C25u && sig_byte_hook_count < 20) {
         uint32_t pc = m68k_get_reg(NULL, M68K_REG_PC);
@@ -483,6 +510,7 @@ static int dsklen_hook_count = 0;
 static int intena_hook_count = 0;
 static int dmacon_hook_count = 0;
 void chipWriteWord(unsigned int address,unsigned int value){
+    watchWrite(address & 0xffffff, 2, value & 0xffff);
     // DSKLEN write (0xDFF024): disk DMA start
     if (address == 0xDFF024u && dsklen_hook_count < 30) {
         uint32_t pc = m68k_get_reg(NULL, M68K_REG_PC);
@@ -616,6 +644,7 @@ static int execlib_sig_count = 0; // tc_SigRecvd of exec.library task @C01570
 static int condev_sig_count  = 0; // tc_SigRecvd of console.device @C0A7E0
 static int tdsig_hook_count  = 0; // tc_SigRecvd of trackdisk.device @C0485E
 void chipWriteLong(unsigned int address,unsigned int value){
+    watchWrite(address & 0xffffff, 4, value);
     // Catch Signal() to trackdisk.device @C0485E: tc_SigRecvd at +0x1A = 0xC04878
     if (address == 0xC04878u && tdsig_hook_count < 40) {
         uint32_t pc = m68k_get_reg(NULL, M68K_REG_PC);
@@ -750,6 +779,11 @@ void chipWriteLong(unsigned int address,unsigned int value){
     
     //RAM - Incomplete address decding means chip addresses below 2meg wrap around
     address &= nativeChipMask;
+    if (address + 2u > nativeChipMask) {    // see chipReadLong
+        chipWriteWord(address, value >> 16);
+        chipWriteWord((address + 2u) & nativeChipMask, value & 0xffff);
+        return;
+    }
     
     //WRITE_LONG(chipset.chipram,address,value);
     uint32_t* dest = (uint32_t*)&low16Meg[address];

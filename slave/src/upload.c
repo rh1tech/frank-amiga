@@ -218,13 +218,17 @@ bool upload_handle(link_session_t *s, uint16_t op) {
         return true;
     }
     case LINK_OP_TRACKDATA: {
-        const int d = (int)(h->arg0 & 0xFF), t = (int)(h->arg0 >> 8);
-        const uint32_t n = h->arg1;
-        bool ok = d < 2 && n && n <= 0x4000u && n <= LINK_UPLOAD_CHUNK && !(n & 3u);
-        if (ok) ok = link_s_bulk_recv(s, bounce, n);
+        /* arg0: drive | track << 8 | timing entries << 16; the bulk: the
+         * MFM, then a timed track's cells (padded to 4 bytes). */
+        const int d = (int)(h->arg0 & 0xFF), t = (int)((h->arg0 >> 8) & 0xFF);
+        const uint32_t nc = h->arg0 >> 16, tb = (nc * 2u + 3u) & ~3u;
+        const uint32_t total = h->arg1;
+        bool ok = d < 2 && total > tb && total <= LINK_UPLOAD_CHUNK && !(total & 3u) && nc <= 512u;
+        if (ok) ok = link_s_bulk_recv(s, bounce, total);
         if (ok) {
+            const uint32_t n = total - tb;
             memcpy(floppyTrackBuffer(d), bounce, n);
-            floppyTrackLoaded(d, t, n);
+            floppyTrackLoaded(d, t, n, (const uint16_t *)(bounce + n), (int)nc);
         }
         link_s_send_ctrl(s, LINK_OP_TRACKDATA | 1, ok, 0, NULL, 0);
         return true;

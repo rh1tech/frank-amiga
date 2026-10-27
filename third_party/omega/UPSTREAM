@@ -18,3 +18,6 @@ Local change: Floppy.c floppyLineTick() — free-running /INDEX pulse (every 312
 Local change: Floppy.c external-track drives (flux images): track requests, variable track length, floppyMountExternal/TrackWanted/TrackLoaded.
 Local change: Floppy.c floppyDataReady() — disk DMA waits (no words transferred) while a flux drive's track is still on its way from the master; DMA.c diskCycle() asks it.
 Local change: Floppy.c floppySetState() — every selected drive takes motor/step/side, status lines wired-OR over connected drives; a port with no drive leaves /CHNG /RDY /TK0 /WPRO high.
+Local change: m68kconf.h M68K_EMULATE_TRACE on (Rob Northen Copylock decrypts itself from the trace handler).
+Local change: DMA.c disk DMA finds DSKSYNC at any bit position and keeps that word alignment; Chipset.c DSKLEN restarts the sync search.
+Local change: Floppy.c timed tracks (flux images with a cell-length table): real-speed rotation, DSKSYNC without DMA, DSKBYTR (WORDEQUAL, BYTEREADY, data byte; byte reads wired in Chipset.c).

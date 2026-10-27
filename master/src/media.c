@@ -279,16 +279,6 @@ bool media_state(bool load) {
     return ctrl(LINK_OP_STATE, load ? 1u : 0u, 0);
 }
 
-/* Bench: decode track `track` of the flux image in `drive` into master
- * PSRAM at 0x180000 (uncached view 0x15180000, read over SWD). */
-uint32_t media_flux_dump(int drive, int track, uint8_t *dst) {
-    if (drive < 0 || drive > 1 || !scp[drive].open) return 0;
-    const uint32_t n = scp_track(&scp[drive], track, buf, sizeof buf);
-    memcpy(dst, buf, n);
-    memset(track_len, 0, sizeof track_len);   /* bench area overlaps the cache */
-    return n;
-}
-
 /* Decoded flux tracks, cached in master PSRAM (16 KB slots, 2.6 MB a
  * drive): revisits are instant. The rest of the disk is decoded in the
  * background, from the last track asked for on, so most requests find
@@ -296,15 +286,40 @@ uint32_t media_flux_dump(int drive, int track, uint8_t *dst) {
 #define TRACK_CACHE(d, t) ((uint8_t *)(0x11000000u + 0x200000u + (uint32_t)(d) * 0x2A0000u + \
                                        (uint32_t)(t) * 0x4000u))
 
+/* A slot: the MFM, then (from 14 KB on) a timed track's cell table. */
+#define TRACK_MFM_MAX 0x3800u
+#define TRACK_CELLS(d, t) ((uint16_t *)(TRACK_CACHE(d, t) + TRACK_MFM_MAX))
+static uint16_t track_ncells[2][SCP_TRACKS], track_spread[2][SCP_TRACKS];
+static scp_cells_t cells;
+
+static void track_store(int d, int t, uint32_t n) {
+    memcpy(TRACK_CACHE(d, t), buf, n);
+    memcpy(TRACK_CELLS(d, t), cells.ns, cells.n * 2u);
+    track_ncells[d][t] = cells.n;
+    track_spread[d][t] = cells.spread;
+    track_len[d][t] = (uint16_t)n;
+}
+
 static uint32_t track_get(int d, int t) {
     if (t < 0 || t >= SCP_TRACKS) return 0;
     if (!track_len[d][t]) {
-        const uint32_t n = scp_track(&scp[d], t, buf, sizeof buf);
+        const uint32_t n = scp_track(&scp[d], t, buf, TRACK_MFM_MAX, &cells);
         if (!n) return 0;
-        memcpy(TRACK_CACHE(d, t), buf, n);
-        track_len[d][t] = (uint16_t)n;
+        track_store(d, t, n);
     }
     return track_len[d][t];
+}
+
+/* Bench: decode a track into the cache (if it is not there yet); returns
+ * its length, and its cell-table entries and spread (1/1000) in `timing`
+ * (entries | spread << 16). The track is at master PSRAM 0x200000 + drive *
+ * 0x2A0000 + track * 16 KB (uncached view 0x15000000 + that, over SWD), its
+ * cell table 14 KB on. */
+uint32_t media_flux_dump(int drive, int track, uint32_t *timing) {
+    if (drive < 0 || drive > 1 || !scp[drive].open) return 0;
+    const uint32_t n = track_get(drive, track);
+    *timing = n ? (uint32_t)track_ncells[drive][track] | (uint32_t)track_spread[drive][track] << 16 : 0;
+    return n;
 }
 
 /* The slave's flux-image drive wants a track: send it. */
@@ -316,9 +331,12 @@ static void serve_tracks(void) {
         const uint64_t t0 = time_us_64();
         const uint32_t n = track_get((int)d, (int)t);
         if (!n) break;
+        /* The MFM, then a timed track's cells (padded to 4 bytes). */
+        const uint32_t nc = track_ncells[d][t], tb = (nc * 2u + 3u) & ~3u;
         memcpy(buf, TRACK_CACHE(d, t), n);
-        const bool ok = link_m_send_ctrl(sess, LINK_OP_TRACKDATA, d | t << 8, n, NULL, 0) &&
-                        link_m_bulk_send(sess, buf, n) && link_m_recv_ctrl(sess) &&
+        memcpy(buf + n, TRACK_CELLS(d, t), nc * 2u);
+        const bool ok = link_m_send_ctrl(sess, LINK_OP_TRACKDATA, d | t << 8 | nc << 16, n + tb, NULL, 0) &&
+                        link_m_bulk_send(sess, buf, n + tb) && link_m_recv_ctrl(sess) &&
                         link_rx_hdr(sess)->op == (LINK_OP_TRACKDATA | 1u) && link_rx_hdr(sess)->arg0;
         if (!ok) {
             printf("media: DF%lu track %lu not delivered\n", (unsigned long)d, (unsigned long)t);
@@ -342,12 +360,9 @@ static void prefetch_step(void) {
     if (now < next_us) return;
     if (bg_d >= 0 && scp[bg_d].bg_track >= 0) {
         const int t = scp[bg_d].bg_track;
-        const uint32_t n = scp_bg_step(&scp[bg_d], 4096u, buf, sizeof buf);
+        const uint32_t n = scp_bg_step(&scp[bg_d], 4096u, buf, TRACK_MFM_MAX, &cells);
         next_us = time_us_64() + 2u * (time_us_64() - now);
-        if (n && !track_len[bg_d][t]) {
-            memcpy(TRACK_CACHE(bg_d, t), buf, n);
-            track_len[bg_d][t] = (uint16_t)n;
-        }
+        if (n && !track_len[bg_d][t]) track_store(bg_d, t, n);
         return;
     }
     bg_d = -1;

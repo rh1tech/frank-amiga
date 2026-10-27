@@ -24,6 +24,8 @@
 #include "Gayle.h"
 #include "Collision.h"
 #include "Floppy.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include "Blitter.h"
 
 // DMA pointers reach chip RAM only: Agnus keeps as many address bits as
@@ -286,7 +288,7 @@ uint16_t serdatr(){
     return chipset.serdatr;
 }
 uint16_t dskbytr(){
-    return chipset.dskbytr;
+    return floppyByteReg();     // frank-amiga: Floppy.c
 }
 uint16_t intenar(){
     return chipset.intenar;
@@ -331,7 +333,25 @@ void dsklen(uint16_t value){
     
     if (!(value & 0x8000))
         floppyWriteAbort();     // frank-amiga: DMA off ends a write
+    // frank-amiga: every DSKLEN write restarts the sync search (a read the
+    // program aborted left it "found", and the next read then stored words
+    // from wherever the head was: shifted data, failed decrunching).
+    floppySync = 0;
+#ifdef FRANK_DSK_SUM
+    { extern uint32_t frankDskSum; frankDskSum = 0; }
+#endif
     if(dskDMALock==2){
+#ifndef PICO_BUILD
+        {   // frank-amiga native: OMEGA_DSK_LOG=1 logs each disk DMA start
+            static int on = -1;
+            if (on < 0) on = getenv("OMEGA_DSK_LOG") != NULL;
+            extern unsigned long native_frame_counter;
+            if (on) printf("  vbl=%lu DSK %s len %d drive %d cyl %d side %d pt %06x adk %04x\n",
+                           native_frame_counter, value & 0x4000 ? "WRITE" : "read", value & 0x3FFF,
+                           driveSelected, df[driveSelected < 4 ? driveSelected : 0].cylinder,
+                           df[driveSelected < 4 ? driveSelected : 0].side, chipset.dskpt, chipset.adkconr);
+        }
+#endif
         chipset.dsklen = value; //a write of 0X8000 here is a secondary lock on the DMA to avoid accidental disk writes
         dskDMALock =0;
     }else{
@@ -1140,6 +1160,9 @@ uint8_t serdatrBL(){
     return chipset.serdatr & 0xFF;
 }
 
+uint8_t dskbytrBH(){ return floppyByteReg() >> 8; }   // frank-amiga
+uint8_t dskbytrBL(){ return floppyByteReg() & 0xFF; }
+
 uint8_t intenarBH(){ //0xE
     return chipset.intenar >> 8;
 }
@@ -1195,8 +1218,8 @@ uint8_t (*getChipReg8[])() = {
     potgorBL,
     serdatrBH,
     serdatrBL,
-    noReadB,
-    noReadB,
+    dskbytrBH,
+    dskbytrBL,
     intenarBH,
     intenarBL,
     intreqrBH,

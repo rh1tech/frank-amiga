@@ -10,7 +10,7 @@
  * revolution is turned into bits with a simple clock that follows the
  * disk's speed and sent as raw MFM (link_proto.h TRACKDATA), so any format
  * works, AmigaDOS or a game's own. Omega's disk DMA finds sync words on word
- * boundaries only, so the track is rotated to put its first 4489 on one
+ * boundaries only, so the track starts with a sync: the one after its gap
  * (everything one DMA write laid down keeps that alignment).
  */
 #include "scp.h"
@@ -51,8 +51,6 @@ void scp_close(scp_t *s) {
     s->bg_track = -1;
 }
 
-#define SCP_TAIL_BYTES 2048u   /* a first sync further in is left in place */
-
 /* Flux is read whole into master PSRAM, after the track cache: the card is
  * several times faster at long reads than at small ones. One buffer for a
  * track asked for now, one for the background job. */
@@ -78,8 +76,12 @@ static bool track_flux(scp_t *s, int track, uint32_t *at, uint32_t *bytes) {
     return true;
 }
 
-static uint32_t flux_to_mfm(const scp_t *s, const uint8_t *flux, uint32_t len,
-                            uint8_t *out, uint32_t cap) {
+/* `flux` is free once read, and serves as scratch for the track's bits. */
+static uint32_t flux_to_mfm(const scp_t *s, uint8_t *flux, uint32_t len,
+                            uint8_t *out, uint32_t cap, scp_cells_t *cells) {
+    uint8_t *const scratch = flux;
+    static uint32_t block_ticks[SCP_CELL_BLOCKS];   /* ticks * 16 per 256 bits */
+    memset(block_ticks, 0, sizeof block_ticks);
     /* Flux to bits. The bit cell in ticks * 16 follows the disk's speed
      * slowly, within +-10 % of 2 us. */
     const uint32_t max_bits = cap * 8u;
@@ -92,59 +94,82 @@ static uint32_t flux_to_mfm(const scp_t *s, const uint8_t *flux, uint32_t len,
         if (t == 0) { carry += 65536u; continue; }
         const int32_t ticks16 = (int32_t)((t + carry) * 16u);
         carry = 0;
-        int32_t cells = (ticks16 + cell / 2) / cell;
-        if (cells < 1) cells = 1;
-        if (cells > 4) cells = 4;
-        cell += (ticks16 / cells - cell) / 16;
+        int32_t ncell = (ticks16 + cell / 2) / cell;
+        if (ncell < 1) ncell = 1;
+        if (ncell > 4) ncell = 4;
+        cell += (ticks16 / ncell - cell) / 16;
         if (cell < nominal * 9 / 10) cell = nominal * 9 / 10;
         if (cell > nominal * 11 / 10) cell = nominal * 11 / 10;
-        nbits += (uint32_t)cells;
+        nbits += (uint32_t)ncell;
         if (nbits > max_bits) { nbits = max_bits; break; }
         out[(nbits - 1) >> 3] |= (uint8_t)(0x80u >> ((nbits - 1) & 7));
+        if (((nbits - 1) >> 8) < SCP_CELL_BLOCKS) block_ticks[(nbits - 1) >> 8] += (uint32_t)ticks16;
     }
 
-    /* Start the track at its first sync word: the revolution is a circle,
-     * so the bits before it follow at the end, in order (a sector across the
-     * index stays whole). The only cut is just before that sync, in its
-     * gap: the bits beyond the last whole 4 bytes are dropped there. */
-    uint32_t sr = 0, start = 0;
+    /* Where the track starts: at the sync after its longest stretch without
+     * one, the gap the writes of a track end in. The revolution is a circle,
+     * so the bits before that sync follow at the end, in order. A track is a
+     * whole number of 32-bit words: the bits beyond are taken out 64 bytes
+     * before the end, inside the gap, where a splice does no harm (cut right
+     * before the sync, an odd count turned the gap's AAAA filler into 5555
+     * against the sync, and Kickstart's bit-level search missed the sync). */
+    uint32_t sr = 0, first = UINT32_MAX, last_sync = 0, last_mark = 0, start = 0, best = 0;
     for (uint32_t i = 0; i < nbits; i++) {
         sr = (sr << 1 | (uint32_t)bit_at(out, i)) & 0xFFFFu;
-        if (i >= 15 && sr == 0x4489u) { start = i - 15; break; }
-    }
-    const uint32_t bytes = (nbits / 8u) & ~3u;
-    if (start) {
-        /* Rotate left by `start` bits: whole bytes through `tail` (the bytes
-         * that wrap), then the bit remainder in place. */
-        static uint8_t tail[SCP_TAIL_BYTES];
-        const uint32_t whole = start >> 3, part = start & 7u;
-        const uint32_t nb = (nbits + 7u) / 8u;
-        if (whole < sizeof tail) {
-            memcpy(tail, out, whole + 1u);
-            memmove(out, out + whole, nb - whole);
-            /* The rotated bit string: bits[start..nbits) then bits[0..start). */
-            uint32_t dst = nbits - start;           /* where the wrapped bits go */
-            for (uint32_t i = 0; i < start; i++, dst++) {
-                const int bit = (tail[i >> 3] >> (7 - (i & 7))) & 1;
-                const uint32_t at = dst + part;     /* still offset by `part` */
-                if (bit) out[at >> 3] |= (uint8_t)(0x80u >> (at & 7));
-                else out[at >> 3] &= (uint8_t)~(0x80u >> (at & 7));
-            }
-            if (part)
-                for (uint32_t j = 0; j < bytes; j++)
-                    out[j] = (uint8_t)(out[j] << part | out[j + 1] >> (8 - part));
+        if (i < 15 || sr != 0x4489u) continue;
+        const uint32_t at = i - 15;
+        if (first != UINT32_MAX && at - last_sync < 64u) {   /* 4489 4489: one mark */
+            last_sync = at;
+            continue;
         }
+        if (first == UINT32_MAX) first = at;
+        else if (at - last_mark > best) { best = at - last_mark; start = at; }
+        last_mark = last_sync = at;
     }
-    return bytes;
+    if (first != UINT32_MAX && first + nbits - last_mark > best) start = first;
+
+    const uint32_t extra = nbits % 32u, total = nbits - extra;
+    const uint32_t cut = total > 1024u ? total - 512u : total;
+    uint32_t acc = 0, n = 0, o = 0, src = start;
+    for (uint32_t k = 0; k < nbits; k++, src = src + 1u == nbits ? 0u : src + 1u) {
+        if (k >= cut && k < cut + extra) continue;
+        acc = acc << 1 | (uint32_t)bit_at(out, src);
+        if (++n == 8u) { scratch[o++] = (uint8_t)acc; acc = 0; n = 0; }
+    }
+    memcpy(out, scratch, o);
+
+    /* The cells' timing, per 256-bit block of the track as sent (whole
+     * blocks of the revolution only; the last, partial one is left out). */
+    const uint32_t blocks = nbits >> 8;
+    uint64_t sum = 0;
+    for (uint32_t b = 0; b < blocks; b++) sum += block_ticks[b];
+    const uint32_t mean = blocks ? (uint32_t)(sum / blocks) : 0;
+    uint32_t spread = 0;
+    for (uint32_t b = 0; b < blocks; b++) {
+        const uint32_t d = block_ticks[b] > mean ? block_ticks[b] - mean : mean - block_ticks[b];
+        if (mean && d * 1000u / mean > spread) spread = d * 1000u / mean;
+    }
+    cells->spread = (uint16_t)spread;
+    cells->n = 0;
+    if (spread > SCP_TIMED_PERMILLE && blocks) {
+        const uint32_t out_blocks = (o * 8u + 255u) >> 8;
+        for (uint32_t j = 0; j < out_blocks && j < SCP_CELL_BLOCKS; j++) {
+            const uint32_t sb = ((start + j * 256u + 128u) % nbits) >> 8;
+            const uint32_t t = block_ticks[sb < blocks ? sb : blocks - 1u];
+            cells->ns[j] = (uint16_t)((uint64_t)t * s->ticks_ns / (16u * 256u));
+        }
+        cells->n = (uint16_t)(out_blocks < SCP_CELL_BLOCKS ? out_blocks : SCP_CELL_BLOCKS);
+    }
+    return o;
 }
 
-uint32_t scp_track(scp_t *s, int track, uint8_t *out, uint32_t cap) {
+uint32_t scp_track(scp_t *s, int track, uint8_t *out, uint32_t cap, scp_cells_t *cells) {
     uint32_t at, len;
     UINT got = 0;
     if (!track_flux(s, track, &at, &len) || f_lseek(&s->f, at) != FR_OK ||
         f_read(&s->f, flux_now, len, &got) != FR_OK)
         return 0;
-    return flux_to_mfm(s, flux_now, got, out, cap);
+    return flux_to_mfm(s, flux_now, got, out, cap, cells);
 }
 
 bool scp_bg_start(scp_t *s, int track) {
@@ -157,7 +182,7 @@ bool scp_bg_start(scp_t *s, int track) {
     return true;
 }
 
-uint32_t scp_bg_step(scp_t *s, uint32_t slice, uint8_t *out, uint32_t cap) {
+uint32_t scp_bg_step(scp_t *s, uint32_t slice, uint8_t *out, uint32_t cap, scp_cells_t *cells) {
     if (s->bg_track < 0) return 0;
     if (s->bg_got < s->bg_len) {
         uint32_t want = s->bg_len - s->bg_got;
@@ -172,5 +197,5 @@ uint32_t scp_bg_step(scp_t *s, uint32_t slice, uint8_t *out, uint32_t cap) {
         return 0;
     }
     s->bg_track = -1;
-    return flux_to_mfm(s, flux_bg, s->bg_len, out, cap);
+    return flux_to_mfm(s, flux_bg, s->bg_len, out, cap, cells);
 }
