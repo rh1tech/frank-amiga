@@ -687,7 +687,12 @@ static void C1_FUNC(c1Colour)(int row, int x, int reg, uint16_t value) {
         rec->segments_used = (uint16_t)used;
         return;
     }
-    for (uint32_t i = rec->row_segment[c1_open_row]; i < used; ++i) {
+    const uint32_t row_first = rec->row_segment[c1_open_row];
+    uint32_t first = used;
+    while (first > row_first &&
+           DVI_SEGMENT_X1(rec->segment[first - 1u]) > (uint32_t)c)
+        --first;
+    for (uint32_t i = first; i < used; ++i) {
         const uint32_t seg = rec->segment[i];
         const uint32_t x0 = DVI_SEGMENT_X0(seg), x1 = DVI_SEGMENT_X1(seg);
         const uint32_t ham = DVI_SEGMENT_HAM(seg);

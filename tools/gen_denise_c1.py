@@ -208,6 +208,26 @@ rep("""            case MSG_LORES: {
                 const int count = (int)(header >> MSG_RUN_SHIFT & 0xfu) + 1;
                 c1_dpf_block = (header & MSG_RUN_DPF) != 0;""")
 
+# frank-amiga: a colour change only touches the open row's segments from
+# its column on; changes come left to right (Copper), so walk the row from
+# its end and stop at the first segment that ends before the change (was:
+# the whole row from its start, through PSRAM, for every change).
+rep("""    for (uint32_t i = rec->row_segment[c1_open_row]; i < used; ++i) {
+        const uint32_t seg = rec->segment[i];
+        const uint32_t x0 = DVI_SEGMENT_X0(seg), x1 = DVI_SEGMENT_X1(seg);
+        const uint32_t ham = DVI_SEGMENT_HAM(seg);
+        if (x1 <= (uint32_t)c)
+            continue;""", """    const uint32_t row_first = rec->row_segment[c1_open_row];
+    uint32_t first = used;
+    while (first > row_first &&
+           DVI_SEGMENT_X1(rec->segment[first - 1u]) > (uint32_t)c)
+        --first;
+    for (uint32_t i = first; i < used; ++i) {
+        const uint32_t seg = rec->segment[i];
+        const uint32_t x0 = DVI_SEGMENT_X0(seg), x1 = DVI_SEGMENT_X1(seg);
+        const uint32_t ham = DVI_SEGMENT_HAM(seg);
+        if (x1 <= (uint32_t)c)
+            continue;""")
 head=open('master/src/denise/denise_c1_head.inc').read()
 open('master/src/denise/denise_c1.c','w').write(head+body+'\n')
 print(len(body.split('\n')),'lines')
