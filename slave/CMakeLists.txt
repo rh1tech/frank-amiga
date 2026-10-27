@@ -73,7 +73,7 @@ target_compile_definitions(frank-amiga-slave PRIVATE ${FRANK_DEFINITIONS}
     ${FRANK_EXTRA_DEFS}
     OMEGA_CPU_CYCLES_PER_SLOT=2
     OMEGA_CPU_SLICE_SLOTS=8
-    RING_WORDS=16384u
+    RING_WORDS=8000u             # ~32 KB: core 1 fills it itself (host_link.c)
     PICO_STACK_SIZE=0x1000       # core 0: all of SCRATCH_Y
     PICO_CORE1_STACK_SIZE=0x1000 # core 1: all of SCRATCH_X
     PICO_HEAP_SIZE=0x100

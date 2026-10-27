@@ -29,6 +29,11 @@ void host_frame_marks_clear(void);
 extern volatile uint32_t host_frames_emulated;
 extern volatile uint32_t hostAudioDrops;
 
+/* Core 1: turns the emulator's queued records into ring messages while
+ * the ring has room; false if there were none. */
+bool host_events_drain(void);
+extern volatile uint32_t host_evq_waits;
+
 /* Called once per emulated frame, after it is queued: pacing hook. */
 void host_frame_paced(void);
 

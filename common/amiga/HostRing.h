@@ -83,52 +83,17 @@ void hostDirectHires(int row, int x, uint16_t p1, uint16_t p2,
 void hostDirectLores(int row, int x, uint16_t p1, uint16_t p2, uint16_t p3,
                      uint16_t p4, uint16_t p5, uint16_t p6, int ham);
 
-// Appends a block to the current run when it continues it with the palette
-// unchanged (what hostDirectHires/Lores() would do then); returns where to
-// write its plane words, or NULL to take the full path.
-static inline uint32_t *hostRunContinue(uint32_t key, int x, int width,
-                                        uint32_t words) {
-    HostRun *r = &host_run;
-    if (!r->words || x != r->next_x ||
-        internal.paletteGeneration != r->palette_sent)
-        return 0;
-    const uint32_t header = r->msg[0];
-    if ((header & MSG_RUN_KEY_MASK) != key ||
-        (header & MSG_RUN_COUNT_MASK) == MSG_RUN_COUNT_MASK)
-        return 0;
-    r->msg[0] = header + (1u << MSG_RUN_SHIFT);
-    uint32_t *planes = &r->msg[r->words];
-    r->words += words;
-    r->next_x = x + width;
-    return planes;
-}
-
+// The DMA's block producers. frank-amiga: on the board a block is a record
+// for core 1 (host_link.c), which builds the runs; nothing to do inline.
 static inline void hostDirectHiresFast(int row, int x, uint16_t p1,
                                        uint16_t p2, uint16_t p3, uint16_t p4) {
-    uint32_t *planes =
-        hostRunContinue(MSG_HEADER(MSG_HIRES, row, 0, 0), x, 16, 2);
-    if (!planes) {
-        hostDirectHires(row, x, p1, p2, p3, p4);
-        return;
-    }
-    planes[0] = p1 | (uint32_t)p2 << 16;
-    planes[1] = p3 | (uint32_t)p4 << 16;
-    hostRowMix2(planes[0], planes[1]);
+    hostDirectHires(row, x, p1, p2, p3, p4);
 }
 
 static inline void hostDirectLoresFast(int row, int x, uint16_t p1,
                                        uint16_t p2, uint16_t p3, uint16_t p4,
                                        uint16_t p5, uint16_t p6, int ham) {
-    uint32_t *planes = hostRunContinue(
-        MSG_HEADER(MSG_LORES, row, 0, ham ? 1 : 0), x, 32, 3);
-    if (!planes) {
-        hostDirectLores(row, x, p1, p2, p3, p4, p5, p6, ham);
-        return;
-    }
-    planes[0] = p1 | (uint32_t)p2 << 16;
-    planes[1] = p3 | (uint32_t)p4 << 16;
-    planes[2] = p5 | (uint32_t)p6 << 16;
-    hostRowMix3(planes[0], planes[1], planes[2]);
+    hostDirectLores(row, x, p1, p2, p3, p4, p5, p6, ham);
 }
 
 #endif

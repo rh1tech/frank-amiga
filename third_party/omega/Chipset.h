@@ -555,9 +555,6 @@ extern Internal_t internal;
 // frank-amiga: the ARGB palette is rebuilt from the colour registers on
 // demand on the board (only fallback renderers read it).
 extern volatile uint8_t paletteArgbDirty;
-// frank-amiga (board): colour registers written since host_link.c last
-// compared them with core 1's palette, a bit each.
-extern uint32_t paletteChanged;
 void paletteArgbSync(void);
 // COLOR00..31 write (register n), as the COLORxx entry points.
 void setColour(unsigned n, uint16_t value);

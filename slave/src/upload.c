@@ -117,6 +117,7 @@ static void hold_core0(bool on) {
     if (on) {
         while (!held) {
             uint32_t slot;
+            host_events_drain();        /* core 0 may wait on its queue */
             const uint32_t n = host_ring_pending(&slot);
             if (n) host_ring_consume(n);
         }

@@ -96,7 +96,12 @@ void hostDirectColour(int reg, uint16_t old, uint16_t value);
 // the row is unchanged, and a row without blocks shows COLOR00 as it is
 // now (Copper colour changes outside the display window).
 void hostDirectRowEnd(int row, int drawn);
+// The line's first raster column reference (dmaBeamColumn()) and HAM,
+// whenever the DMA recomputes them; a colour write is placed with the
+// latest.
+void hostLineLayout(int first, int ham);
 #else
+static inline void hostLineLayout(int first, int ham) { (void)first; (void)ham; }
 static inline void hostDirectColour(int reg, uint16_t old, uint16_t value) {
     (void)reg; (void)old; (void)value;
 }

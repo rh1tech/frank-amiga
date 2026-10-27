@@ -105,7 +105,8 @@ static void fill_chunk(bool resync) {
     uint32_t avail = host_ring_pending(&slot);
     const uint64_t deadline = time_us_64() + 2000u;
     while (avail < LINK_STREAM_PAYLOAD_WORDS && time_us_64() < deadline) {
-        tight_loop_contents();
+        if (!host_events_drain())
+            tight_loop_contents();
         avail = host_ring_pending(&slot);
     }
     /* After a loss the master wants to restart at a frame: drop everything
@@ -184,6 +185,11 @@ static void fill_chunk(bool resync) {
 static void __not_in_flash_func(pump_loop)(void) {
     for (;;) {
         link_db_set(sess.link, false);      /* idle: DB_SM low (see link_m_resync) */
+        /* Until the master rings, build messages from core 0's records. */
+        if (!link_db_get(sess.link)) {
+            host_events_drain();
+            continue;
+        }
         const uint16_t op = link_s_wait_ctrl(&sess, 1000);
         if (!op) continue;
         const link_hdr_t *hdr = link_rx_hdr(&sess);

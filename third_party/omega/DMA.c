@@ -998,6 +998,11 @@ static void dmaUpdateLineState(void) {
                         !omegaDdfIsFullWidth(chipset.ddfstrt)
                       ? 0x3C - HOST_FETCH_LEAD / 4
                       : chipset.ddfstrt;
+        // frank-amiga: core 1 places colour writes by beam position with
+        // this (dmaBeamColumn()).
+        hostLineLayout(2 * lineRasterDdf + (hires ? OMEGA_SPRITE_HIRES_OFFSET
+                                                  : OMEGA_SPRITE_LORES_OFFSET),
+                       (chipset.bplcon0 & 0x800) != 0);
     }
     // Disabled planes' slots may be skipped (see slotIsActive()); clear their
     // data latches here, as those slots would.

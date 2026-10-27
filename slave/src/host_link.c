@@ -8,6 +8,14 @@
 // Denise is rendered. Paula's line records join the same ring
 // (MSG_AUDIO), so video and audio arrive at the master in emulated-time
 // order.
+//
+// frank-amiga: the messages are built on core 1. Core 0 (the emulator)
+// only appends compact records of what it produced (bitplane blocks,
+// colour writes, sprites, line and frame ends, Paula's line records) to an
+// event queue; core 1 turns them into messages between link requests (the
+// emulator's share of State of the Art's chunky part was ~12 %). Core 1
+// keeps its own copy of the colour registers from the colour records, so
+// nothing here reads the chipset while core 0 runs on.
 
 #include "Host.h"
 #include "HostRing.h"
@@ -21,6 +29,7 @@
 #include "../omega/VideoStandard.h"
 #include "pico/stdlib.h"
 #include "hardware/sync.h"
+#include "hardware/timer.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -28,7 +37,8 @@ Host_t host;
 
 // The ARGB raster fallback is never used here (every frame is direct), but
 // DMA.c still references it; a scratch line keeps a stray call harmless.
-static uint32_t raster_scratch[HOST_RASTER_W];
+// (one block at most: 32 pixels, see Planar.c)
+static uint32_t raster_scratch[64];
 uint32_t *hostRasterPixels(int row, int x) { (void)row; (void)x; return raster_scratch; }
 void hostRasterWritten(int row, int x, int width) { (void)row; (void)x; (void)width; }
 
@@ -54,6 +64,28 @@ static bool direct_frame;         // this frame renders straight to the frame
 int hostDirectActive;             // mirrors direct_frame for DMA.c
 
 #define SPRITE_X_BIAS 64   // raster x + bias fits the 10-bit field
+
+// Event queue records (core 0 -> core 1, see host_events_drain()).
+enum {
+    EV_PAD,         // the rest of the buffer is unused
+    EV_LORES,       // + 3 words: planes 1/2, 3/4, 5/6; row, x, flags
+    EV_HIRES,       // + 2 words: planes 1/2, 3/4; row, x, flags
+    EV_COLOUR,      // + 1 word: 0x0RGB; register, row, column, flags
+    EV_SPRITE,      // + 3 words: the sprite message
+    EV_ROW_END,     // row + 1 (bits 4..15), drawn (bit 16)
+    EV_AUDIO,       // + count words (bits 4..): Paula's line record
+    EV_FRAME,       // + 2 words: DDFSTRT | DDFSTOP << 16, BPLCON0 | LOF << 16
+    EV_BEGIN,       // the same, first frame (no frame end before)
+    EV_RESTORED,    // a savestate was loaded
+    EV_LAYOUT,      // first raster column reference (bits 4..15), HAM (bit 16)
+};
+#define EV_HAM (1u << 23)
+#define EV_DPF (1u << 24)
+#define EV_PF2PRI (1u << 25)
+#define EV_DPF_DELTA_SHIFT 26     // PF2H - PF1H + 16, 5 bits
+static void evFrame(uint32_t type);
+// Core 1: the line layout colour writes are placed with (EV_LAYOUT).
+static int c1_layout_first = 2 * 0x38 + OMEGA_SPRITE_LORES_OFFSET, c1_layout_ham;
 // Message format: HostRing.h.
 
 // Core 1 waits for a pending frame to be shown while core 0 keeps queueing;
@@ -65,7 +97,7 @@ int hostDirectActive;             // mirrors direct_frame for DMA.c
 // larger rings change nothing). Any size works: positions run over
 // [0, 2 * RING_WORDS).
 #ifndef RING_WORDS
-#define RING_WORDS 16384u // 64 KB
+#define RING_WORDS 8192u // 32 KB (frank-amiga: filled by core 1 itself)
 #endif
 #define RING_SPAN (2u * RING_WORDS)
 // Ring fill at which core 1 stops waiting for the pending frame's swap and
@@ -244,24 +276,30 @@ static inline uint32_t argbToOcs(uint32_t argb) {
 // the whole palette.
 static uint16_t core1_palette[32];
 static bool core1_palette_valid;
+// The colour registers as of the records processed (core 1), their
+// generation (+2 per write, as internal.paletteGeneration) and the
+// registers written since the last palette comparison.
+static uint16_t c1_colour[32];
+static uint32_t c1_generation;
+static uint32_t c1_changed;
 
 static void __attribute__((noinline)) hostDirectSendPaletteWith(
     int except, uint16_t colour) {
     colourQueueFlush();
-    host_run.palette_sent = internal.paletteGeneration;
+    host_run.palette_sent = c1_generation;
     row_colours_changed = true;
     runFlush(); // the blocks before the change use the old palette
     uint32_t msg[2 + 16];
     uint32_t mask = 0, n = 0;
     // Only registers written since the last comparison can differ.
-    uint32_t check = core1_palette_valid ? paletteChanged : ~0u;
+    uint32_t check = core1_palette_valid ? c1_changed : ~0u;
     if (except >= 0)
         check |= 1u << except;
-    paletteChanged = 0;
+    c1_changed = 0;
     while (check) {
         const int i = __builtin_ctz(check);
         check &= check - 1u;
-        const uint16_t c = i == except ? colour : (uint16_t)((&chipset.color00)[i] & 0xfffu);
+        const uint16_t c = i == except ? colour : c1_colour[i];
         if (core1_palette_valid && c == core1_palette[i])
             continue;
         core1_palette[i] = c;
@@ -286,7 +324,7 @@ static void hostDirectSendPalette(void) {
 }
 
 static inline void hostDirectSyncPalette(void) {
-    if (internal.paletteGeneration != host_run.palette_sent)
+    if (c1_generation != host_run.palette_sent)
         hostDirectSendPalette();
 }
 
@@ -309,15 +347,19 @@ static bool prev_row_sent;
 // Oldest frame either scanout buffer holds (core 1, 0: unknown).
 static volatile uint32_t c1_oldest_frame;
 
-static void hostDirectBegin(void) {
+// The frame's layout registers, as core 0 recorded them at its start.
+typedef struct {
+    uint16_t ddfstrt, ddfstop, bplcon0, lof;
+} frame_regs_t;
+
+static void hostDirectBegin(const frame_regs_t *fr) {
     runFlush();
     ringPublish();
-    const bool full_width = omegaDdfIsFullWidth(chipset.ddfstrt);
+    const bool full_width = omegaDdfIsFullWidth(fr->ddfstrt);
     // Narrow layouts that need hostPresentFrame()'s wrapped-fetch
     // reconstruction (pixels moved between lines) keep the ARGB path.
     const bool narrow = !full_width;
     direct_frame = full_width || narrow;
-    hostDirectActive = direct_frame;
     if (!direct_frame)
         return;
     row_end_generation = host_run.palette_sent;   // core 1's palette
@@ -325,16 +367,16 @@ static void hostDirectBegin(void) {
     // layout maps one raster row to one image row.
     const int step = 1, first_row = 0;
     const int rotation =
-        narrow ? 0 : omegaDdfRowRotation(chipset.ddfstrt, chipset.ddfstop);
+        narrow ? 0 : omegaDdfRowRotation(fr->ddfstrt, fr->ddfstop);
     int height = dvi_display_direct_height();
     if (height > DIRECT_MAX_ROWS)
         height = DIRECT_MAX_ROWS;
     // Interlace (BPLCON0 LACE): which field this frame is (LOF: long).
-    const uint32_t lace = (chipset.bplcon0 & 0x4) != 0;
+    const uint32_t lace = (fr->bplcon0 & 0x4) != 0;
     const uint32_t msg[4] = {
         MSG_HEADER(MSG_BEGIN, 0, 0, 0),
         (uint16_t)first_row | (uint32_t)step << 16 | (uint32_t)narrow << 24 |
-            lace << 25 | (uint32_t)(internal.LOF & 1u) << 26,
+            lace << 25 | (uint32_t)(fr->lof & 1u) << 26,
         (uint32_t)rotation | (uint32_t)height << 16,
         ++direct_frame_no,
     };
@@ -357,33 +399,32 @@ static void hostDirectBegin(void) {
 // Copper changes COLOR00 every 22 colour clocks, which block boundaries
 // rounded to 64 or 96 columns). Earlier changes not sent yet (between
 // frames) go as the full palette first.
-void hostDirectColour(int reg, uint16_t old, uint16_t value) {
-    // A change left of the image (most Copper changes, made in the
-    // horizontal blank) or right of it is exact with the palette sync
-    // before the next block or row end, as before; only one inside the
-    // image's columns needs its position: inside drawn blocks, or in the
-    // border (ATK's colour bars run through the border lines too). A
-    // message per change cost RemGame ~3 %.
-    const int row = internal.vPos - OMEGA_DIRECT_FIRST_LINE;
-    int x = dmaBeamColumn();
-    if (row < 0 || row >= OMEGA_DIRECT_ROWS || x <= 0 || x >= HOST_RASTER_W)
+// Core 1: colour register `reg` set to `value`; `in_image`: the write is
+// inside the image's columns, at raster column x of image row `row`; ham:
+// the line is HAM.
+static void c1ColourWrite(int reg, uint16_t value, int in_image, int row,
+                          int x, int ham) {
+    const uint16_t old = c1_colour[reg];
+    c1_colour[reg] = value;
+    c1_generation += 2;
+    c1_changed |= 1u << reg;
+    if (!direct_frame || !in_image)
         return;
     // Earlier changes still pending go first, with this register as it
     // was before this change.
-    if (host_run.palette_sent != internal.paletteGeneration - 2u)
+    if (host_run.palette_sent != c1_generation - 2u)
         hostDirectSendPaletteWith(reg, old);
-    host_run.palette_sent = internal.paletteGeneration;
+    host_run.palette_sent = c1_generation;
     row_colours_changed = true;
-    x = x < 0 ? 0 : x > 0x3ff ? 0x3ff : x;
     core1_palette[reg] = value;
     if (colour_queued && (row != colour_queue_row || colour_queued == COLOUR_QUEUE_MAX))
         colourQueueSend();
     if (!colour_queued)
         colour_queue_row = row;
-    colour_queue[1 + colour_queued++] = MSG_COLOUR_WORD(x, reg, value & 0xfffu);
+    colour_queue[1 + colour_queued++] = MSG_COLOUR_WORD(x, reg, value);
     // HAM rows send at once: their pixels take the palette as the blocks
     // arrive.
-    if (chipset.bplcon0 & 0x800)
+    if (ham)
         colourQueueSend();
 }
 
@@ -426,9 +467,9 @@ static void hostDirectRowEndVideo(int row, int drawn) {
     host_row_hash = 0x811c9dc5u;
     ringPublish();
     row_start = ring_wr;
-    if (row < 0 || drawn || internal.paletteGeneration == row_end_generation)
+    if (row < 0 || drawn || c1_generation == row_end_generation)
         return;
-    row_end_generation = internal.paletteGeneration;
+    row_end_generation = c1_generation;
     hostDirectSyncPalette();
     runFlush();
     runStart(MSG_HEADER(MSG_ROW_END, row, 0, 0));   // a one-word message
@@ -451,12 +492,13 @@ static int dpf_delta;             // PF2H - PF1H of the row's blocks
 static int dpf_next_x = -1000;    // where a following block would start
 static uint64_t dpf_carry[3];     // the shifted planes' recent words, newest low
 
-static inline uint32_t dpfBlockFlag(int row) {
-    if (!(chipset.bplcon0 & 0x400))
+// ev: a block record's header (EV_DPF..., see the event queue below).
+static inline uint32_t dpfBlockFlag(int row, uint32_t ev) {
+    if (!(ev & EV_DPF))
         return 0;
-    const int delta = (int)((chipset.bplcon1 >> 4) & 15) - (int)(chipset.bplcon1 & 15);
+    const int delta = (int)((ev >> EV_DPF_DELTA_SHIFT) & 31u) - 16;
     // Sent with delta 0: the shift is done here.
-    const uint32_t st = ((uint32_t)(chipset.bplcon2 >> 6) & 1u) << 5;
+    const uint32_t st = (ev & EV_PF2PRI) ? 1u << 5 : 0u;
     if (row != dpf_row || st != dpf_state || delta != dpf_delta) {
         if (row != dpf_row || delta != dpf_delta)
             dpf_next_x = -1000;
@@ -493,10 +535,10 @@ static inline void dpfAlign(int x, int step, int bits_per_lores,
         *c = dpfShift(*c, 2, bits);
 }
 
-void hostDirectHires(int row, int x, uint16_t p1, uint16_t p2,
-                     uint16_t p3, uint16_t p4) {
+static void c1HiresBlock(int row, int x, uint16_t p1, uint16_t p2,
+                         uint16_t p3, uint16_t p4, uint32_t ev) {
     hostDirectSyncPalette();
-    const uint32_t dpf = dpfBlockFlag(row);
+    const uint32_t dpf = dpfBlockFlag(row, ev);
     if (dpf && dpf_delta) {
         if (dpf_delta > 0) dpfAlign(x, 16, 2, &p2, &p4, NULL);   // PF2 later
         else               dpfAlign(x, 16, 2, &p1, &p3, NULL);   // PF1 later
@@ -507,10 +549,11 @@ void hostDirectHires(int row, int x, uint16_t p1, uint16_t p2,
     hostRowMix2(planes[0], planes[1]);
 }
 
-void hostDirectLores(int row, int x, uint16_t p1, uint16_t p2, uint16_t p3,
-                     uint16_t p4, uint16_t p5, uint16_t p6, int ham) {
+static void c1LoresBlock(int row, int x, uint16_t p1, uint16_t p2, uint16_t p3,
+                         uint16_t p4, uint16_t p5, uint16_t p6, int ham,
+                         uint32_t ev) {
     hostDirectSyncPalette();
-    const uint32_t dpf = ham ? 0 : dpfBlockFlag(row);
+    const uint32_t dpf = ham ? 0 : dpfBlockFlag(row, ev);
     if (dpf && dpf_delta) {
         if (dpf_delta > 0) dpfAlign(x, 32, 1, &p2, &p4, &p6);    // PF2 later
         else               dpfAlign(x, 32, 1, &p1, &p3, &p5);    // PF1 later
@@ -523,22 +566,12 @@ void hostDirectLores(int row, int x, uint16_t p1, uint16_t p2, uint16_t p3,
     hostRowMix3(planes[0], planes[1], planes[2]);
 }
 
-void hostDirectSprite(int row, int x, int colour_base, int attached,
-                      int behind, uint16_t a, uint16_t b, uint16_t c,
-                      uint16_t d) {
-    const int field = x + SPRITE_X_BIAS;
-    if (field < 0 || field > 0x3ff || row < 0 || row > 0x1ff)
-        return;
+// Core 1: a sprite message (built by core 0, 2 or 3 words).
+static void c1Sprite(const uint32_t *msg) {
+    const bool attached = (msg[0] >> 28) & 1u;
     hostDirectSyncPalette();
     colourQueueFlush();
     runFlush(); // sprites go over the blocks already sent
-    const uint32_t msg[3] = {
-        MSG_HEADER(MSG_SPRITE, row, field,
-                   (uint32_t)colour_base | (uint32_t)(attached != 0) << 5 |
-                   (uint32_t)(behind != 0) << 6),
-        a | (uint32_t)b << 16,
-        c | (uint32_t)d << 16,
-    };
     hostRowMix3(msg[0], msg[1], attached ? msg[2] : 0u);
     ringPush(msg, attached ? 3u : 2u);
 }
@@ -549,7 +582,7 @@ static void hostDirectFinish(void) {
     runFlush();
     const uint32_t msg[2] = {
         MSG_HEADER(MSG_END, 0, 0, 0),
-        chipset.color00 & 0xfffu,
+        c1_colour[0],
     };
     ringPush(msg, count_of(msg));
     ringPublish();
@@ -576,23 +609,22 @@ static uint32_t audio_stage[1 + AUDIO_LINE_MAX_WORDS];
 static uint32_t audio_stage_words;
 volatile uint32_t hostAudioDrops;
 
-int hostAudioLine(const uint32_t *words, int count) {
+static void c1AudioLine(const uint32_t *words, int count) {
     if (audio_stage_words || count > AUDIO_LINE_MAX_WORDS) {
         ++hostAudioDrops;
-        return 0;
+        return;
     }
     audio_stage[0] = MSG_HEADER(MSG_AUDIO, 0, 0, (uint32_t)count);
     for (int i = 0; i < count; ++i)
         audio_stage[1 + i] = words[i];
     audio_stage_words = 1u + (uint32_t)count;
-    return 1;
 }
 
 void hostAudioOut(const int16_t *samples, int frames) {
     (void)samples; (void)frames;   // mixing happens on the master
 }
 
-void hostDirectRowEnd(int row, int drawn) {
+static void c1RowEnd(int row, int drawn) {
     hostDirectRowEndVideo(row, drawn);
     runFlush();
     if (audio_stage_words) {
@@ -651,9 +683,9 @@ int hostResetRequested;
 // frank-amiga: a savestate was loaded (savestate.c): the machine jumped, so
 // core 1's picture of it is stale. Every row is resent (as for a new
 // layout), with the palette and the DPF state.
-void host_state_restored(void) {
+static void c1Restored(void) {
     row_layout[0] = row_layout[1] = ~0u;
-    host_run.palette_sent = internal.paletteGeneration - 1u;
+    host_run.palette_sent = c1_generation - 1u;
     core1_palette_valid = false;
     dpf_row = -1;
     dpf_state = ~0u;
@@ -677,6 +709,263 @@ void pressKey(uint16_t keyCode) { (void)keyCode; }
 void releaseKey(uint16_t keyCode) { (void)keyCode; }
 void toggleLEDs(void) {}
 
+
+// ── Event queue: core 0 -> core 1 (frank-amiga) ───────────────────────────
+// Records of 1..4+ words, the type in the low 4 bits of the first. A record
+// never wraps: the tail of the buffer is skipped with EV_PAD.
+#define EVQ_WORDS 16384u   // 64 KB
+static uint32_t evq[EVQ_WORDS];
+static volatile uint32_t evq_head, evq_tail;   // free running word positions
+static uint32_t evq_tail_seen;                 // core 0's copy of evq_tail
+volatile uint32_t host_evq_waits;              // core 0 found it full
+volatile uint32_t host_evq_wait_us;            // ... and waited this long
+
+static inline uint32_t evqRoom(uint32_t head) {
+    return EVQ_WORDS - (head - evq_tail_seen);
+}
+
+// Core 0: room for an n-word record; returns where to write it.
+static inline uint32_t *evqReserve(uint32_t n) {
+    uint32_t head = evq_head;
+    uint32_t slot = head % EVQ_WORDS;
+    const uint32_t need = slot + n > EVQ_WORDS ? EVQ_WORDS - slot + n : n;
+    if (evqRoom(head) < need) {
+        host_evq_waits++;
+        const uint32_t t0 = timer_hw->timerawl;
+        do {
+            evq_tail_seen = __atomic_load_n(&evq_tail, __ATOMIC_ACQUIRE);
+        } while (evqRoom(head) < need);
+        host_evq_wait_us += timer_hw->timerawl - t0;
+    }
+    if (slot + n > EVQ_WORDS) {
+        evq[slot] = EV_PAD;
+        head += EVQ_WORDS - slot;
+        __atomic_store_n(&evq_head, head, __ATOMIC_RELEASE);
+        slot = 0;
+    }
+    return &evq[slot];
+}
+
+// The M33 makes its stores in program order and core 1 polls, so a plain
+// store after the record's words publishes it (no barrier, no event).
+static inline void evqCommit(uint32_t n) {
+    __atomic_signal_fence(__ATOMIC_RELEASE);
+    evq_head = evq_head + n;
+}
+
+// Header bits of a block record (dpfBlockFlag()).
+static inline uint32_t evBlockFlags(void) {
+    if (!(chipset.bplcon0 & 0x400))
+        return 0;
+    const int delta = (int)((chipset.bplcon1 >> 4) & 15) - (int)(chipset.bplcon1 & 15);
+    return EV_DPF | ((chipset.bplcon2 >> 6) & 1u ? EV_PF2PRI : 0u) |
+           (uint32_t)(delta + 16) << EV_DPF_DELTA_SHIFT;
+}
+
+void hostDirectHires(int row, int x, uint16_t p1, uint16_t p2,
+                     uint16_t p3, uint16_t p4) {
+    uint32_t *e = evqReserve(3);
+    e[0] = EV_HIRES | (uint32_t)row << 4 | (uint32_t)x << 13 | evBlockFlags();
+    e[1] = p1 | (uint32_t)p2 << 16;
+    e[2] = p3 | (uint32_t)p4 << 16;
+    evqCommit(3);
+}
+
+void hostDirectLores(int row, int x, uint16_t p1, uint16_t p2, uint16_t p3,
+                     uint16_t p4, uint16_t p5, uint16_t p6, int ham) {
+    uint32_t *e = evqReserve(4);
+    e[0] = EV_LORES | (uint32_t)row << 4 | (uint32_t)x << 13 |
+           (ham ? EV_HAM : evBlockFlags());
+    e[1] = p1 | (uint32_t)p2 << 16;
+    e[2] = p3 | (uint32_t)p4 << 16;
+    e[3] = p5 | (uint32_t)p6 << 16;
+    evqCommit(4);
+}
+
+// Every colour register write (Chipset.c setColour()), so core 1's copy
+// stays complete, with its beam position: core 1 works out where it lands
+// (c1ColourAt()).
+void hostDirectColour(int reg, uint16_t old, uint16_t value) {
+    (void)old;
+    uint32_t *e = evqReserve(2);
+    e[0] = EV_COLOUR | (uint32_t)reg << 4 | (uint32_t)internal.vPos << 9 |
+           (uint32_t)internal.hPos << 18;
+    e[1] = value & 0xfffu;
+    evqCommit(2);
+}
+
+// The line layout colour writes are placed with (DMA.c), when it changes.
+static int layout_first = -1, layout_ham;
+void hostLineLayout(int first, int ham) {
+    if (first == layout_first && ham == layout_ham)
+        return;
+    layout_first = first;
+    layout_ham = ham;
+    uint32_t *e = evqReserve(1);
+    e[0] = EV_LAYOUT | (uint32_t)first << 4 | (ham ? 1u << 16 : 0u);
+    evqCommit(1);
+}
+
+void hostDirectSprite(int row, int x, int colour_base, int attached,
+                      int behind, uint16_t a, uint16_t b, uint16_t c,
+                      uint16_t d) {
+    const int field = x + SPRITE_X_BIAS;
+    if (field < 0 || field > 0x3ff || row < 0 || row > 0x1ff)
+        return;
+    uint32_t *e = evqReserve(4);
+    e[0] = EV_SPRITE;
+    e[1] = MSG_HEADER(MSG_SPRITE, row, field,
+                      (uint32_t)colour_base | (uint32_t)(attached != 0) << 5 |
+                      (uint32_t)(behind != 0) << 6);
+    e[2] = a | (uint32_t)b << 16;
+    e[3] = c | (uint32_t)d << 16;
+    evqCommit(4);
+}
+
+void hostDirectRowEnd(int row, int drawn) {
+    uint32_t *e = evqReserve(1);
+    e[0] = EV_ROW_END | (uint32_t)(row + 1) << 4 | (drawn ? 1u << 16 : 0u);
+    evqCommit(1);
+}
+
+int hostAudioLine(const uint32_t *words, int count) {
+    if (count > AUDIO_LINE_MAX_WORDS) {
+        ++hostAudioDrops;
+        return 0;
+    }
+    uint32_t *e = evqReserve(1u + (uint32_t)count);
+    e[0] = EV_AUDIO | (uint32_t)count << 4;
+    for (int i = 0; i < count; ++i)
+        e[1 + i] = words[i];
+    evqCommit(1u + (uint32_t)count);
+    return 1;
+}
+
+// A frame starts (EV_BEGIN) or ends and the next starts (EV_FRAME), with
+// the registers its layout comes from.
+static void evFrame(uint32_t type) {
+    uint32_t *e = evqReserve(3);
+    e[0] = type;
+    e[1] = chipset.ddfstrt | (uint32_t)chipset.ddfstop << 16;
+    e[2] = chipset.bplcon0 | (uint32_t)(internal.LOF & 1u) << 16;
+    evqCommit(3);
+}
+
+// A savestate was loaded (savestate.c): the machine jumped, so core 1's
+// picture of it is stale. The colour registers go again, then every row is
+// resent (as for a new layout), with the palette and the DPF state.
+void host_state_restored(void) {
+    for (int i = 0; i < 32; ++i) {
+        uint32_t *e = evqReserve(2);
+        e[0] = EV_COLOUR | (uint32_t)i << 4;
+        e[1] = (&chipset.color00)[i] & 0xfffu;
+        evqCommit(2);
+    }
+    uint32_t *e = evqReserve(1);
+    e[0] = EV_RESTORED;
+    evqCommit(1);
+}
+
+// Core 1: turns queued records into messages while the ring has room for
+// the most any record may add. Returns whether any was taken.
+#define EVQ_RING_MARGIN 512u
+bool host_events_drain(void) {
+    uint32_t tail = evq_tail;
+    const uint32_t head = __atomic_load_n(&evq_head, __ATOMIC_ACQUIRE);
+    if (tail == head) {
+        // Nothing queued: wait a little before looking again, so this
+        // core's polling does not compete with core 0 for SRAM.
+        busy_wait_at_least_cycles(400);
+        return false;
+    }
+    while (tail != head &&
+           RING_WORDS - ringFill(ring_wr, __atomic_load_n(&ring_tail, __ATOMIC_ACQUIRE)) >= EVQ_RING_MARGIN) {
+        const uint32_t *e = &evq[tail % EVQ_WORDS];
+        const uint32_t h = e[0];
+        uint32_t n;
+        switch (h & 15u) {
+        case EV_PAD:
+            n = EVQ_WORDS - tail % EVQ_WORDS;
+            break;
+        case EV_LORES:
+            c1LoresBlock((int)(h >> 4 & 0x1ffu), (int)(h >> 13 & 0x3ffu),
+                         (uint16_t)e[1], (uint16_t)(e[1] >> 16),
+                         (uint16_t)e[2], (uint16_t)(e[2] >> 16),
+                         (uint16_t)e[3], (uint16_t)(e[3] >> 16),
+                         (h & EV_HAM) != 0, h);
+            n = 4;
+            break;
+        case EV_HIRES:
+            c1HiresBlock((int)(h >> 4 & 0x1ffu), (int)(h >> 13 & 0x3ffu),
+                         (uint16_t)e[1], (uint16_t)(e[1] >> 16),
+                         (uint16_t)e[2], (uint16_t)(e[2] >> 16), h);
+            n = 3;
+            break;
+        case EV_COLOUR: {
+            // A change left of the image (most Copper changes, made in the
+            // horizontal blank) or right of it takes effect with the
+            // palette sync before the next block or row end; only one
+            // inside the image's columns needs its position: inside drawn
+            // blocks, or in the border (ATK's colour bars run through the
+            // border lines too). As dmaBeamColumn(): a colour write shows
+            // one colour clock (4 columns) before the bitplane pixel
+            // reference.
+            const int row = (int)(h >> 9 & 0x1ffu) - OMEGA_DIRECT_FIRST_LINE;
+            int x = 2 * (2 * (int)(h >> 18 & 0xffu) - c1_layout_first) - 4;
+            const int in_image = row >= 0 && row < OMEGA_DIRECT_ROWS &&
+                                 x > 0 && x < HOST_RASTER_W;
+            if (x > 0x3ff)
+                x = 0x3ff;
+            c1ColourWrite((int)(h >> 4 & 31u), (uint16_t)e[1], in_image,
+                          row, x, c1_layout_ham);
+            n = 2;
+            break;
+        }
+        case EV_LAYOUT:
+            c1_layout_first = (int)(h >> 4 & 0xfffu);
+            c1_layout_ham = (h >> 16) & 1u;
+            n = 1;
+            break;
+        case EV_SPRITE:
+            if (direct_frame)
+                c1Sprite(&e[1]);
+            n = 4;
+            break;
+        case EV_ROW_END:
+            c1RowEnd((int)(h >> 4 & 0xfffu) - 1, (h >> 16) & 1u);
+            n = 1;
+            break;
+        case EV_AUDIO:
+            n = 1u + (h >> 4);
+            c1AudioLine(&e[1], (int)(h >> 4));
+            break;
+        case EV_FRAME:
+        case EV_BEGIN: {
+            const frame_regs_t fr = {
+                (uint16_t)e[1], (uint16_t)(e[1] >> 16),
+                (uint16_t)e[2], (uint16_t)(e[2] >> 16),
+            };
+            if ((h & 15u) == EV_FRAME)
+                hostDirectFinish();
+            frame_mark_push(ring_wr);
+            hostDirectBegin(&fr);
+            n = 3;
+            break;
+        }
+        case EV_RESTORED:
+            c1Restored();
+            n = 1;
+            break;
+        default:            // cannot happen: drop the queue
+            n = head - tail;
+            break;
+        }
+        tail += n;
+        __atomic_store_n(&evq_tail, tail, __ATOMIC_RELEASE);
+    }
+    return true;
+}
+
 // ── Lifecycle ─────────────────────────────────────────────────────────────
 volatile uint32_t host_frames_emulated;
 
@@ -685,20 +974,16 @@ void hostInit(void) {
     host.rasterRow = 0;
     host.rasterX = 0;
     host.displayIsLores = 0;
-    direct_frame = false;
-    hostDirectActive = 0;
     // Every frame is direct from the very first one: there is no ARGB path.
-    frame_mark_push(ring_wr);
-    hostDirectBegin();
+    hostDirectActive = 1;
+    evFrame(EV_BEGIN);
 }
 
 // Once per VBL (DMA.c).
 void hostDisplay(void) {
-    hostDirectFinish();
+    evFrame(EV_FRAME);
     host_frames_emulated++;
     host_frame_paced();
-    frame_mark_push(ring_wr);
-    hostDirectBegin();
 }
 
 // The mixer (omega/AudioMix.c) runs on the master; Audio.c still resets it.
