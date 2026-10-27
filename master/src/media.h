@@ -11,7 +11,7 @@
 #include "link_session.h"
 
 typedef struct {
-    char kick[128], ext[128], df0[128], df1[128];
+    char kick[256], ext[256], df0[256], df1[256];
     bool drive1;                /* DF1 connected (also when df1 is set) */
     uint8_t joykeys;            /* usb_amiga.h JOYKEYS_* */
     uint16_t chip_kb, slow_kb;  /* 512/1024/2048, 0/512/1024 */
@@ -23,6 +23,8 @@ bool media_mount(void);
 /* Mounts the card afresh (after a swap). */
 bool media_remount(void);
 bool media_load_config(void);
+/* Writes the current configuration to frank-amiga.ini. */
+bool media_save_ini(void);
 /* Upload the configured ROMs and disk, then reboot the slave from them. */
 bool media_boot(void);
 bool media_upload(uint32_t target, const char *path);

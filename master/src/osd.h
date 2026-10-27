@@ -11,6 +11,7 @@
 
 void osd_init(void);              /* after video_init() */
 void osd_toggle(void);
+void osd_fm_toggle(void);        /* the file manager (F11) */
 bool osd_active(void);
 /* A key while the menu is open (HID usage code). */
 void osd_key(uint8_t hid, bool down);

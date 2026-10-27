@@ -44,7 +44,6 @@ void usb_amiga_init(void) {
     A(0x32, 0x2B); A(0x33, 0x29); A(0x34, 0x2A); A(0x35, 0x00); A(0x36, 0x38);
     A(0x37, 0x39); A(0x38, 0x3A); A(0x39, 0x62);
     for (int i = 0; i < 10; i++) A(0x3A + i, 0x50 + i);  /* F1..F10 */
-    A(0x44, 0x5F);                                       /* F11 -> Help */
     A(0x49, 0x5F);                                       /* Insert -> Help */
     A(0x47, 0x5B); A(0x53, 0x5A);                        /* Scroll/Num -> ( ) */
     A(0x4C, 0x46);                                       /* Delete */
@@ -156,6 +155,10 @@ void usb_amiga_poll(void) {
     while (usbhid_get_key_action(&code, &down)) {
         if (code == 0x45) {                              /* F12: menu */
             if (down) osd_toggle();
+            continue;
+        }
+        if (code == 0x44) {                              /* F11: file manager */
+            if (down) osd_fm_toggle();
             continue;
         }
         if (osd_active()) {                              /* the menu has the keyboard */

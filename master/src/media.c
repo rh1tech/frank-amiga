@@ -153,7 +153,7 @@ bool media_load_config(void) {
         printf("media: no %s\n", INI_PATH);
         return false;
     }
-    char line[160];
+    char line[300];
     while (f_gets(line, sizeof line, &f)) {
         trim(line);
         char *eq = strchr(line, '=');
@@ -175,6 +175,27 @@ bool media_load_config(void) {
            media_config.ext, media_config.df0, media_config.df1,
            media_config.drive1 ? "" : " (no DF1)", media_config.chip_kb, media_config.slow_kb);
     return media_config.kick[0] != 0;
+}
+
+/* Writes media_config back to the ini (paths without the "0:" drive), so
+ * a Kickstart or disk chosen in the file manager is there after power-off. */
+bool media_save_ini(void) {
+    if (!media_mount()) return false;
+    FIL f;
+    if (f_open(&f, INI_PATH, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) return false;
+#define NO_DRIVE(p) ((p)[0] == '0' && (p)[1] == ':' ? (p) + 2 : (p))
+    f_printf(&f, "# frank-amiga: Kickstart and disks at power-on (see master/src/media.c)\n");
+    if (media_config.kick[0]) f_printf(&f, "kick=%s\n", NO_DRIVE(media_config.kick));
+    if (media_config.ext[0]) f_printf(&f, "ext=%s\n", NO_DRIVE(media_config.ext));
+    if (media_config.df0[0]) f_printf(&f, "df0=%s\n", NO_DRIVE(media_config.df0));
+    if (media_config.df1[0]) f_printf(&f, "df1=%s\n", NO_DRIVE(media_config.df1));
+    else if (media_config.drive1) f_printf(&f, "drives=2\n");
+#undef NO_DRIVE
+    f_printf(&f, "chip=%u\nslow=%u\n", media_config.chip_kb, media_config.slow_kb);
+    f_printf(&f, "joykeys=%s\n", usb_amiga_joykeys_name(media_config.joykeys));
+    const bool ok = f_close(&f) == FR_OK;
+    printf("media: %s %s\n", INI_PATH, ok ? "saved" : "NOT saved");
+    return ok;
 }
 
 bool media_boot(void) {
@@ -206,7 +227,7 @@ bool media_boot(void) {
 bool media_insert(int drive, const char *path) {
     char *dst = drive ? media_config.df1 : media_config.df0;
     if (strcmp(path, "none") && is_scp(path)) {
-        char p[128];
+        char p[256];
         prefix_path(p, sizeof p, path);
         cache_reset(drive);
         if (!scp_open(&scp[drive], p) && !(media_remount() && scp_open(&scp[drive], p))) {
@@ -218,7 +239,7 @@ bool media_insert(int drive, const char *path) {
         stream_start();
         printf("media: DF%d flux image %s %s\n", drive, p, ok ? "inserted" : "FAILED");
         if (ok) {
-            snprintf(dst, 128, "%s", p);
+            snprintf(dst, sizeof media_config.df0, "%s", p);
             if (drive) media_config.drive1 = true;
         }
         return ok;
@@ -231,14 +252,14 @@ bool media_insert(int drive, const char *path) {
         if (ok) dst[0] = 0;
         return ok;
     }
-    char p[128];
+    char p[256];
     prefix_path(p, sizeof p, path);
     stream_stop();
     const bool ok = media_upload(drive ? LINK_UP_DF1 : LINK_UP_DF0, p) &&
                     ctrl(LINK_OP_INSERT, (uint32_t)drive, 1);
     stream_start();
     if (ok) {
-        snprintf(dst, 128, "%s", p);
+        snprintf(dst, sizeof media_config.df0, "%s", p);
         if (drive) media_config.drive1 = true;
     }
     return ok;
@@ -414,7 +435,7 @@ void media_poll(void) {
 bool media_sdput(uint32_t offset, uint32_t size, const char *path) {
     memset(track_len, 0, sizeof track_len);   /* the bench area overlaps the track cache */
     if (!media_mount()) return false;
-    char p[128];
+    char p[256];
     prefix_path(p, sizeof p, path);
     /* Create the parent directories. */
     for (char *q = p + 3; (q = strchr(q, '/')); q++) {

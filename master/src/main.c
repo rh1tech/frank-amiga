@@ -26,6 +26,7 @@
 #include "denise/denise_frames.h"
 #include "input.h"
 #include "stream.h"
+#include "ff.h"
 #include "media.h"
 #include "osd.h"
 #include "usb_amiga.h"
@@ -255,6 +256,14 @@ static void cmd_fluxdump(int argc, char **argv) {
            (unsigned long)(timing & 0xFFFFu), (unsigned long)(timing >> 16));
 }
 
+/* sdrm <path>: bench, delete a file from the card. */
+static void cmd_sdrm(int argc, char **argv) {
+    if (argc < 2) return;
+    char p[160];
+    snprintf(p, sizeof p, "0:%s", argv[1]);
+    printf("sdrm %s: %s\n", p, f_unlink(p) == FR_OK ? "deleted" : "FAILED");
+}
+
 /* sdhold: bench, keep the track cache still for a file staged over it. */
 static void cmd_sdhold(int argc, char **argv) {
     (void)argc; (void)argv;
@@ -352,10 +361,12 @@ static void cmd_sdput(int argc, char **argv) {
 
 /* osd: toggle the menu; osdkey <up|down|left|right|enter|esc|pgup|pgdn>. */
 static void cmd_osd(int argc, char **argv) { osd_toggle(); }
+static void cmd_fm(int argc, char **argv) { (void)argc; (void)argv; osd_fm_toggle(); }
 static void cmd_osdkey(int argc, char **argv) {
     static const struct { const char *n; uint8_t hid; } k[] = {
         {"up", 0x52}, {"down", 0x51}, {"left", 0x50}, {"right", 0x4F},
         {"enter", 0x28}, {"esc", 0x29}, {"pgup", 0x4B}, {"pgdn", 0x4E},
+        {"home", 0x4A}, {"end", 0x4D}, {"bksp", 0x2A},
     };
     for (int a = 1; a < argc; a++)
         for (unsigned i = 0; i < sizeof k / sizeof k[0]; i++)
@@ -406,6 +417,7 @@ static const console_cmd_t cmds[] = {
     { "key",    cmd_key,    "key <hex> [up|down|tap]: Amiga raw keycode" },
     { "mouse",  cmd_mouse,  "mouse <dx> <dy> [buttons]" },
     { "state",  cmd_state,  "state save|load: savestate (slave PSRAM)" },
+    { "sdrm",   cmd_sdrm,   "sdrm <path>: bench, delete a file from the card" },
     { "sdhold", cmd_sdhold, "sdhold: bench, pause flux decoding until the next sdput" },
     { "scpraw", cmd_scpraw, "scpraw <drive> <track>: bench, raw SCP track to PSRAM 0x7C0000" },
     { "fluxdump", cmd_fluxdump, "fluxdump <drive> <track>|all: bench, MFM tracks into the cache" },
@@ -415,7 +427,8 @@ static const console_cmd_t cmds[] = {
     { "reset",  cmd_reset,  "Ctrl-Amiga-Amiga" },
     { "vol",    cmd_vol,    "vol [0..256]: audio output volume" },
     { "osd",    cmd_osd,    "toggle the on-screen menu (F12)" },
-    { "osdkey", cmd_osdkey, "osdkey <up|down|left|right|enter|esc|pgup|pgdn>..." },
+    { "fm",     cmd_fm,     "toggle the file manager (F11)" },
+    { "osdkey", cmd_osdkey, "osdkey <up|down|left|right|enter|esc|pgup|pgdn|home|end|bksp>..." },
     { "boot",   cmd_boot,   "reload frank-amiga.ini, upload, cold-start" },
     { "kick",   cmd_kick,   "kick <path>: change Kickstart and cold-start" },
     { "ext",    cmd_kick,   "ext <path|none>: extended ROM and cold-start" },

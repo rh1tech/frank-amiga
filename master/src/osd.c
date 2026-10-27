@@ -1,5 +1,5 @@
 /*
- * frank-amiga — master: the on-screen menu (F12).
+ * frank-amiga — master: the on-screen menu (F12) and file manager (F11).
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
@@ -7,6 +7,10 @@
  * (osd_overlay_row(), from denise_row() on core 1); the menu logic runs on
  * core 0 from key events (USB, or the console's `osdkey`). While it is open
  * the Amiga gets no keyboard or mouse input.
+ *
+ * The file manager (F11) walks the card from /amiga: a disk image (.adf,
+ * .scp) goes into DF0 or DF1 or boots, a Kickstart (256/512 KB file) is
+ * used, each optionally saved to frank-amiga.ini as the power-on choice.
  */
 #include "osd.h"
 
@@ -29,9 +33,15 @@
 #define COLS 36
 #define ROWS 14
 #define LIST_ROWS (ROWS - 4)
+/* The file manager: a wide box of single-width characters. */
+#define FM_COLS 76
+#define FM_ROWS 26
+#define FM_LIST (FM_ROWS - 6)
 
-/* The text the overlay draws (core 1 reads it, core 0 writes it). */
-static char text[ROWS][COLS];
+/* The text the overlay draws (core 1 reads it, core 0 writes it), and its
+ * size: rows, columns, and 2 for double-width characters. */
+static char text[FM_ROWS][FM_COLS];
+static uint32_t ov_rows = ROWS, ov_cols = COLS, ov_scale = 2;
 static uint8_t highlight = 0xFF;          /* row drawn inverted */
 static volatile bool visible;
 
@@ -41,10 +51,11 @@ static uint32_t box_x0, box_row0;          /* in output pixels / source rows */
 
 void __not_in_flash_func(osd_overlay_row)(uint32_t row, uint32_t *out, uint32_t width) {
     if (!visible) return;
-    const uint32_t box_rows = ROWS * 8u + 4u;
+    const uint32_t rows = ov_rows, cols = ov_cols, scale = ov_scale;
+    const uint32_t box_rows = rows * 8u + 4u;
     if (row < box_row0 || row >= box_row0 + box_rows) return;
     const uint32_t y = row - box_row0;
-    const uint32_t box_w = COLS * 16u + 8u;
+    const uint32_t box_w = cols * 8u * scale + 8u;
     uint32_t *o = out + box_x0;
     if (y < 2u || y >= box_rows - 2u) {
         for (uint32_t x = 0; x < box_w; x++) o[x] = col_frame;
@@ -56,36 +67,232 @@ void __not_in_flash_func(osd_overlay_row)(uint32_t row, uint32_t *out, uint32_t 
     const bool hl = r == highlight;
     const uint32_t fg = hl ? col_hl_fg : col_fg, bg = hl ? col_hl_bg : col_bg;
     uint32_t *p = o + 4;
-    for (uint32_t c = 0; c < COLS; c++) {
+    for (uint32_t c = 0; c < cols; c++) {
         const uint8_t bits = osd_font[(uint8_t)text[r][c] * 8u + gy];
-        for (uint32_t b = 0; b < 8; b++) {
-            const uint32_t v = (bits >> b) & 1u ? fg : bg;
-            p[0] = v;
-            p[1] = v;
-            p += 2;
+        if (scale == 2) {
+            for (uint32_t b = 0; b < 8; b++) {
+                const uint32_t v = (bits >> b) & 1u ? fg : bg;
+                p[0] = v;
+                p[1] = v;
+                p += 2;
+            }
+        } else {
+            for (uint32_t b = 0; b < 8; b++) *p++ = (bits >> b) & 1u ? fg : bg;
         }
     }
     (void)width;
 }
 
 /* ── Menu (core 0) ─────────────────────────────────────────────────────── */
-typedef enum { M_MAIN, M_FILES } mode_t;
+typedef enum { M_MAIN, M_FILES, M_FM, M_FM_ACTION } mode_t;
 static mode_t mode;
 static int sel, top;
 static int files_target;                   /* T_DF0, T_DF1, T_KICK */
 enum { T_DF0, T_DF1, T_KICK };
 #define MAX_FILES 256
-static char (*files)[64];                  /* names, in PSRAM */
+#define NAME_MAX_REC 257                   /* a type character and a long file name */
+static char (*files)[NAME_MAX_REC];        /* names, in PSRAM */
 static int nfiles;
 
 static void put(int r, const char *s) {
-    memset(text[r], ' ', COLS);
-    for (int c = 0; c < COLS && s[c]; c++) text[r][c] = s[c];
+    memset(text[r], ' ', FM_COLS);
+    for (int c = 0; c < (int)ov_cols && s[c]; c++) text[r][c] = s[c];
+}
+
+/* The box's size and place on the screen. */
+static void layout(uint32_t rows, uint32_t cols, uint32_t scale) {
+    ov_rows = rows;
+    ov_cols = cols;
+    ov_scale = scale;
+    box_x0 = (video_width() - (cols * 8u * scale + 8u)) / 2u;
+    box_row0 = (video_rows() - (rows * 8u + 4u)) / 2u;
 }
 
 static const char *base(const char *path) {
     const char *b = strrchr(path, '/');
     return b ? b + 1 : path;
+}
+
+/* ── File manager (F11) ─────────────────────────────────────────────── */
+/* Entries in `files`: a type character, then the name. */
+enum { E_UP = '^', E_DIR = '/', E_DISK = 'd', E_KICK = 'k', E_OTHER = ' ' };
+static char fm_dir[256] = "/amiga";        /* without the "0:" drive */
+static int fm_action;
+
+static bool ends_with(const char *s, const char *ext) {
+    const size_t n = strlen(s), m = strlen(ext);
+    return n > m && !strcasecmp(s + n - m, ext);
+}
+
+static int fm_cmp(const void *a, const void *b) {
+    const char *x = a, *y = b;
+    if ((x[0] == E_UP) != (y[0] == E_UP)) return x[0] == E_UP ? -1 : 1;
+    if ((x[0] == E_DIR) != (y[0] == E_DIR)) return x[0] == E_DIR ? -1 : 1;
+    return strcasecmp(x + 1, y + 1);
+}
+
+static void fm_scan(void) {
+    nfiles = 0;
+    if (strcmp(fm_dir, "/")) snprintf(files[nfiles++], NAME_MAX_REC, "%c..", E_UP);
+    if (!media_mount()) return;
+    char path[264];
+    snprintf(path, sizeof path, "0:%s", fm_dir);
+    DIR d;
+    FILINFO fi;
+    if (f_opendir(&d, path) != FR_OK &&
+        (!media_remount() || f_opendir(&d, path) != FR_OK)) return;
+    while (nfiles < MAX_FILES && f_readdir(&d, &fi) == FR_OK && fi.fname[0]) {
+        if (fi.fattrib & AM_HID || fi.fname[0] == '.') continue;
+        char type = E_OTHER;
+        if (fi.fattrib & AM_DIR) type = E_DIR;
+        else if (ends_with(fi.fname, ".adf") || ends_with(fi.fname, ".scp")) type = E_DISK;
+        else if (fi.fsize == 262144u || fi.fsize == 524288u) type = E_KICK;
+        snprintf(files[nfiles++], NAME_MAX_REC, "%c%s", type, fi.fname);
+    }
+    f_closedir(&d);
+    qsort(files, (size_t)nfiles, NAME_MAX_REC, fm_cmp);
+}
+
+static void fm_enter(const char *name) {
+    const size_t n = strlen(fm_dir);
+    snprintf(fm_dir + n, sizeof fm_dir - n, "%s%s", strcmp(fm_dir, "/") ? "/" : "", name);
+    fm_scan();
+    sel = top = 0;
+}
+
+static void fm_up(void) {
+    char *p = strrchr(fm_dir, '/');
+    if (!p) return;
+    if (p == fm_dir) fm_dir[1] = 0;
+    else *p = 0;
+    fm_scan();
+    sel = top = 0;
+}
+
+static const char *const disk_actions[] = {
+    "Insert into DF0", "Insert into DF1", "Boot from it (DF0, reset)",
+    "Boot from it and make it the power-on disk", "Cancel",
+};
+static const char *const kick_actions[] = {
+    "Use as Kickstart (reset)", "Use as Kickstart and make it the power-on one", "Cancel",
+};
+
+static int fm_action_count(void) {
+    return files[sel][0] == E_DISK ? 5 : 3;
+}
+
+static void fm_do(void) {
+    char path[400];
+    snprintf(path, sizeof path, "%s%s%s", fm_dir, strcmp(fm_dir, "/") ? "/" : "", files[sel] + 1);
+    const bool disk = files[sel][0] == E_DISK;
+    const int a = fm_action;
+    if (a == fm_action_count() - 1) {           /* Cancel */
+        mode = M_FM;
+        return;
+    }
+    visible = false;                           /* show the machine while it loads */
+    mode = M_FM;
+    if (disk && a < 2) {
+        media_insert(a, path);
+        return;
+    }
+    if (disk) {
+        snprintf(media_config.df0, sizeof media_config.df0, "0:%s", path);
+    } else {
+        snprintf(media_config.kick, sizeof media_config.kick, "0:%s", path);
+        /* An extended ROM only belongs to AROS. */
+        if (!strstr(path, "aros")) media_config.ext[0] = 0;
+    }
+    if ((disk && a == 3) || (!disk && a == 1)) media_save_ini();
+    media_boot();
+    sleep_ms(300);
+    stream_start();
+}
+
+static void fm_draw(void) {
+    char line[FM_COLS + 1];
+    for (int r = 0; r < FM_ROWS; r++) put(r, "");
+    snprintf(line, sizeof line, " File manager (F11)   %.52s", fm_dir);
+    put(0, line);
+    if (mode == M_FM_ACTION) {
+        snprintf(line, sizeof line, " %.70s", files[sel] + 1);
+        put(2, line);
+        const char *const *acts = files[sel][0] == E_DISK ? disk_actions : kick_actions;
+        for (int i = 0; i < fm_action_count(); i++) {
+            snprintf(line, sizeof line, "   %s", acts[i]);
+            put(4 + i, line);
+        }
+        highlight = (uint8_t)(4 + fm_action);
+        put(FM_ROWS - 1, " up/down, Enter: do it   Esc: back");
+        return;
+    }
+    for (int i = 0; i < FM_LIST && top + i < nfiles; i++) {
+        const char *e = files[top + i];
+        if (e[0] == E_UP) snprintf(line, sizeof line, "   ..");
+        else if (e[0] == E_DIR) snprintf(line, sizeof line, "   %.71s/", e + 1);
+        else snprintf(line, sizeof line, " %s %.72s", e[0] == E_DISK ? "*" : e[0] == E_KICK ? "K" : " ",
+                      e + 1);
+        put(2 + i, line);
+    }
+    if (!nfiles) put(2, "   (empty)");
+    highlight = nfiles ? (uint8_t)(2 + sel - top) : 0xFF;
+    snprintf(line, sizeof line, " DF0: %.32s   DF1: %.30s",
+             media_config.df0[0] ? base(media_config.df0) : "(empty)",
+             media_config.df1[0] ? base(media_config.df1) : "(empty)");
+    put(FM_ROWS - 4, line);
+    snprintf(line, sizeof line, " Kick: %.68s", base(media_config.kick));
+    put(FM_ROWS - 3, line);
+    put(FM_ROWS - 1, " Enter: open/choose  Backspace: up  * disk  K Kickstart  F11/Esc: close");
+}
+
+static void fm_key(uint8_t hid) {
+    if (mode == M_FM_ACTION) {
+        const int n = fm_action_count();
+        switch (hid) {
+        case 0x52: fm_action = (fm_action + n - 1) % n; break;
+        case 0x51: fm_action = (fm_action + 1) % n; break;
+        case 0x29: case 0x2A: mode = M_FM; break;
+        case 0x28: case 0x58: fm_do(); break;
+        }
+        if (visible) fm_draw();
+        return;
+    }
+    switch (hid) {
+    case 0x52: if (sel > 0) sel--; break;                                  /* up */
+    case 0x51: if (sel < nfiles - 1) sel++; break;                         /* down */
+    case 0x4B: sel = sel > FM_LIST ? sel - FM_LIST : 0; break;             /* page up */
+    case 0x4E: sel = sel + FM_LIST < nfiles ? sel + FM_LIST : (nfiles ? nfiles - 1 : 0); break;
+    case 0x4A: sel = 0; break;                                             /* home */
+    case 0x4D: sel = nfiles ? nfiles - 1 : 0; break;                       /* end */
+    case 0x2A: fm_up(); break;                                             /* backspace */
+    case 0x29: visible = false; return;                                    /* Esc */
+    case 0x28: case 0x58:                                                  /* Enter */
+        if (!nfiles) break;
+        if (files[sel][0] == E_UP) fm_up();
+        else if (files[sel][0] == E_DIR) fm_enter(files[sel] + 1);
+        else if (files[sel][0] == E_DISK || files[sel][0] == E_KICK) {
+            mode = M_FM_ACTION;
+            fm_action = 0;
+        }
+        break;
+    }
+    if (sel < top) top = sel;
+    if (sel >= top + FM_LIST) top = sel - FM_LIST + 1;
+    fm_draw();
+}
+
+void osd_fm_toggle(void) {
+    if (visible && (mode == M_FM || mode == M_FM_ACTION)) {
+        visible = false;
+        return;
+    }
+    visible = false;
+    layout(FM_ROWS, FM_COLS, 1);
+    mode = M_FM;
+    fm_scan();
+    sel = top = 0;
+    fm_draw();
+    visible = true;
 }
 
 enum { I_DF0, I_DF1, I_KICK, I_RESET, I_SAVE, I_LOAD, I_VOL, I_JOY, I_EXIT, I_COUNT };
@@ -136,15 +343,15 @@ static void load_files(const char *dir) {
         (!media_remount() || f_opendir(&d, dir) != FR_OK)) return;
     while (nfiles < MAX_FILES && f_readdir(&d, &fi) == FR_OK && fi.fname[0]) {
         if (fi.fattrib & (AM_DIR | AM_HID) || fi.fname[0] == '.') continue;
-        snprintf(files[nfiles++], 64, "%s", fi.fname);
+        snprintf(files[nfiles++], NAME_MAX_REC, "%s", fi.fname);
     }
     f_closedir(&d);
-    qsort(files, (size_t)nfiles, 64, cmp);
+    qsort(files, (size_t)nfiles, NAME_MAX_REC, cmp);
 }
 
 static void choose_file(void) {
     if (!nfiles) return;
-    char path[128];
+    char path[400];
     snprintf(path, sizeof path, "%s/%s", files_target == T_KICK ? "/amiga/kick" : "/amiga/adf", files[sel]);
     visible = false;                       /* show the machine while it loads */
     if (files_target == T_KICK) {
@@ -163,6 +370,10 @@ static void choose_file(void) {
 
 void osd_key(uint8_t hid, bool down) {
     if (!down) return;
+    if (mode == M_FM || mode == M_FM_ACTION) {
+        fm_key(hid);
+        return;
+    }
     const int n = mode == M_MAIN ? I_COUNT : nfiles;
     switch (hid) {
     case 0x52: if (sel > 0) sel--; break;                       /* up */
@@ -210,20 +421,27 @@ void osd_key(uint8_t hid, bool down) {
 }
 
 void osd_toggle(void) {
+    if (visible && mode != M_MAIN && mode != M_FILES) {
+        visible = false;                       /* F12 over the file manager */
+    }
     visible = !visible;
-    if (visible) { mode = M_MAIN; sel = 0; draw(); }
+    if (visible) {
+        layout(ROWS, COLS, 2);
+        mode = M_MAIN;
+        sel = 0;
+        draw();
+    }
 }
 
 bool osd_active(void) { return visible; }
 
 void osd_init(void) {
-    files = (char (*)[64])(0x11000000u + 0x100000u);   /* master PSRAM, 16 KB */
+    files = (char (*)[NAME_MAX_REC])(0x11000000u + 0x100000u);   /* master PSRAM, 66 KB */
     col_fg = video_rgb12_to_888(0xEEE);
     col_bg = video_rgb12_to_888(0x125);
     col_hl_fg = video_rgb12_to_888(0x000);
     col_hl_bg = video_rgb12_to_888(0xFA0);
     col_frame = video_rgb12_to_888(0x8AF);
-    box_x0 = (video_width() - (COLS * 16u + 8u)) / 2u;
-    box_row0 = (video_rows() - (ROWS * 8u + 4u)) / 2u;
+    layout(ROWS, COLS, 2);
     draw();
 }
