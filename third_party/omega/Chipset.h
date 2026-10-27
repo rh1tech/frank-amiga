@@ -552,6 +552,10 @@ typedef struct{
 
 extern Chipset_t  chipset;
 extern Internal_t internal;
+// frank-amiga: the ARGB palette is rebuilt from the colour registers on
+// demand on the board (only fallback renderers read it).
+extern volatile uint8_t paletteArgbDirty;
+void paletteArgbSync(void);
 extern uint8_t spriteArmed;  // bit n: sprite n armed (SPRxDATA written)
 
 void ChipsetInit();

@@ -127,9 +127,16 @@ static uint32_t tail_seen;
 static inline void ringWaitRoom(uint32_t head, uint32_t count) {
     if (ringFill(head, tail_seen) + count <= RING_WORDS)
         return;
+#ifdef DMA_SLOT_STATS
+    extern uint32_t dma_cyc_wait;
+    const uint32_t c0 = *(volatile uint32_t *)0xE0001004u;
+#endif
     do {
         tail_seen = __atomic_load_n(&ring_tail, __ATOMIC_ACQUIRE);
     } while (ringFill(head, tail_seen) + count > RING_WORDS);
+#ifdef DMA_SLOT_STATS
+    dma_cyc_wait += *(volatile uint32_t *)0xE0001004u - c0;
+#endif
 }
 
 static inline void ringPush(const uint32_t *words, uint32_t count) {
@@ -164,6 +171,27 @@ static inline void runFlush(void) {
         ring_wr = ringAdvance(ring_wr, host_run.words);
     }
     host_run.words = 0;
+}
+
+// frank-amiga: colour changes inside the image are queued and sent at the
+// row's end (or before any other kind of message): sent at once, each one
+// ended the run of blocks being built, splitting a Copper-heavy row (State
+// of the Art's chunky part: 36 changes a line) into dozens of runs. Core 1
+// places a change by its column whatever the order. HAM rows keep sending
+// at once: their pixels take the palette as the blocks arrive.
+#define COLOUR_QUEUE_MAX 64
+static uint32_t colour_queue[2 * COLOUR_QUEUE_MAX];
+static uint32_t colour_queued;
+
+static void __attribute__((noinline)) colourQueueSend(void) {
+    runFlush();
+    ringPush(colour_queue, 2u * colour_queued);
+    colour_queued = 0;
+}
+
+static inline void colourQueueFlush(void) {
+    if (colour_queued)
+        colourQueueSend();
 }
 
 // Starts a run with this header where it will be published.
@@ -209,14 +237,15 @@ static inline uint32_t argbToOcs(uint32_t argb) {
 // Sends the whole palette; register `except` (if >= 0) as `colour`.
 static void __attribute__((noinline)) hostDirectSendPaletteWith(
     int except, uint16_t colour) {
+    colourQueueFlush();
     host_run.palette_sent = internal.paletteGeneration;
     row_colours_changed = true;
     runFlush(); // the blocks before the change use the old palette
     uint32_t msg[17];
     msg[0] = MSG_HEADER(MSG_PALETTE, 0, 0, 0);
     for (int i = 0; i < 16; ++i)
-        msg[1 + i] = argbToOcs(internal.palette[2 * i]) |
-                     argbToOcs(internal.palette[2 * i + 1]) << 16;
+        msg[1 + i] = ((&chipset.color00)[2 * i] & 0xfffu) |
+                     ((uint32_t)(&chipset.color00)[2 * i + 1] & 0xfffu) << 16;
     if (except >= 0) {
         uint32_t *pair = &msg[1 + except / 2];
         const int shift = (except & 1) ? 16 : 0;
@@ -317,8 +346,15 @@ void hostDirectColour(int reg, uint16_t old, uint16_t value) {
         hostDirectSendPaletteWith(reg, old);
     host_run.palette_sent = internal.paletteGeneration;
     row_colours_changed = true;
-    runFlush();
     x = x < 0 ? 0 : x > 0x3ff ? 0x3ff : x;
+    if (!(chipset.bplcon0 & 0x800) && colour_queued < COLOUR_QUEUE_MAX) {
+        colour_queue[2 * colour_queued] = MSG_HEADER(MSG_COLOUR, row, x, reg);
+        colour_queue[2 * colour_queued + 1] = value;
+        colour_queued++;
+        return;
+    }
+    colourQueueFlush();
+    runFlush();
     const uint32_t msg[2] = { MSG_HEADER(MSG_COLOUR, row, x, reg), value };
     ringPush(msg, count_of(msg));
 }
@@ -329,6 +365,7 @@ void hostDirectColour(int reg, uint16_t old, uint16_t value) {
 uint32_t host_row_hash = 0x811c9dc5u;
 
 static void hostDirectRowEndVideo(int row, int drawn) {
+    colourQueueFlush();
     runFlush();
     bool sent = false;
     if (row >= 0 && row < DIRECT_MAX_ROWS && row_has_blocks) {
@@ -398,6 +435,7 @@ static inline uint32_t dpfBlockFlag(int row) {
         dpf_row = row;
         dpf_state = st;
         dpf_delta = delta;
+        colourQueueFlush();
         runFlush();
         host_dpf_rows++;
         const uint32_t msg = MSG_HEADER(MSG_DPF, row, 0, st);
@@ -464,6 +502,7 @@ void hostDirectSprite(int row, int x, int colour_base, int attached,
     if (field < 0 || field > 0x3ff || row < 0 || row > 0x1ff)
         return;
     hostDirectSyncPalette();
+    colourQueueFlush();
     runFlush(); // sprites go over the blocks already sent
     const uint32_t msg[3] = {
         MSG_HEADER(MSG_SPRITE, row, field,
@@ -477,11 +516,12 @@ void hostDirectSprite(int row, int x, int colour_base, int attached,
 }
 
 static void hostDirectFinish(void) {
+    colourQueueFlush();
     hostDirectSyncPalette();
     runFlush();
     const uint32_t msg[2] = {
         MSG_HEADER(MSG_END, 0, 0, 0),
-        argbToOcs(internal.palette[0]),
+        chipset.color00 & 0xfffu,
     };
     ringPush(msg, count_of(msg));
     ringPublish();

@@ -156,13 +156,17 @@ static void pace(void) {
 
 /* Where chip RAM is in use this frame, for the SRAM bank promotion. */
 static void sample_banks(void) {
-    uint32_t a[10], w[10];
+    uint32_t a[12], w[12];
     int n = 0;
     a[n] = m68k_get_reg(NULL, M68K_REG_PC); w[n++] = 8;
     const int planes = (chipset.bplcon0 >> 12) & 7;
     const uint32_t *bpl = &chipset.bpl1pt;
     for (int i = 0; i < planes && i < 6; ++i) { a[n] = bpl[i]; w[n++] = 4; }
     a[n] = chipset.cop1lc; w[n++] = 2;
+    /* Where the Copper executes now (a list jumped to, a per-line loop):
+     * a busy Copper fetches a word every other slot. */
+    a[n] = (uint32_t)internal.copperPC << 1;
+    w[n++] = internal.copperCycle != 3 && internal.copperCycle != 4 ? 8 : 1;
     a[n] = chipset.bltdpt; w[n++] = 4;
     chip_bank_sample(a, w, n);
 }
@@ -307,12 +311,33 @@ static void __not_in_flash_func(emulation_loop)(void) {
                        (unsigned long)alert_stack[5], (unsigned long)alert_stack[6], (unsigned long)alert_stack[7]);
             }
 #ifdef DMA_SLOT_STATS
-            extern uint32_t dma_stat_slow, dma_stat_batched, dma_stat_skipped;
-            printf("slots/frame: slow %lu batched %lu skipped %lu\n",
+            extern uint32_t dma_stat_slow, dma_stat_batched, dma_stat_skipped, dma_stat_cop, dma_stat_blit;
+            printf("slots/frame: slow %lu (copper %lu, blitter %lu) batched %lu skipped %lu\n",
                    (unsigned long)(dma_stat_slow / (f - last_frames + 1)),
+                   (unsigned long)(dma_stat_cop / (f - last_frames + 1)),
+                   (unsigned long)(dma_stat_blit / (f - last_frames + 1)),
                    (unsigned long)(dma_stat_batched / (f - last_frames + 1)),
                    (unsigned long)(dma_stat_skipped / (f - last_frames + 1)));
-            dma_stat_slow = dma_stat_batched = dma_stat_skipped = 0;
+            dma_stat_slow = dma_stat_batched = dma_stat_skipped = dma_stat_cop = dma_stat_blit = 0;
+            {
+                extern uint32_t dma_cyc_slots, dma_cyc_copper, dma_cyc_colour, dma_cyc_blit, dma_cyc_cpu, dma_cyc_dma, dma_cyc_wait, dma_cyc_eol, dma_cyc_p1;
+                static int dwt_on;
+                if (!dwt_on) {   /* DEMCR.TRCENA, DWT_CTRL.CYCCNTENA */
+                    *(volatile uint32_t *)0xE000EDFCu |= 1u << 24;
+                    *(volatile uint32_t *)0xE0001000u |= 1u;
+                    dwt_on = 1;
+                }
+                const uint32_t fr = f - last_frames + 1;
+                printf("kcycles/frame: cpu %lu (incl. catch-ups), dma %lu, slot calls %lu (copper %lu, colour writes %lu, blitter %lu)\n",
+                       (unsigned long)(dma_cyc_cpu / fr / 1000u), (unsigned long)(dma_cyc_dma / fr / 1000u),
+                       (unsigned long)(dma_cyc_slots / fr / 1000u), (unsigned long)(dma_cyc_copper / fr / 1000u),
+                       (unsigned long)(dma_cyc_colour / fr / 1000u), (unsigned long)(dma_cyc_blit / fr / 1000u));
+                printf("kcycles/frame: ring wait %lu, end of line %lu, plane-1 blocks (copper runs) %lu\n",
+                       (unsigned long)(dma_cyc_wait / fr / 1000u), (unsigned long)(dma_cyc_eol / fr / 1000u),
+                       (unsigned long)(dma_cyc_p1 / fr / 1000u));
+                dma_cyc_slots = dma_cyc_copper = dma_cyc_colour = dma_cyc_blit = dma_cyc_cpu = dma_cyc_dma = 0;
+                dma_cyc_wait = dma_cyc_eol = dma_cyc_p1 = 0;
+            }
 #endif
             last_frames = f;
 #ifdef CHIP_BANK_PROFILE

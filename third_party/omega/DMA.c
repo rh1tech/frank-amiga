@@ -720,6 +720,7 @@ static void __attribute__((noinline)) hiresPeekedWord(int row, int x,
     if (hostDirectActive) {
         hostDirectHires(row, x, p1, p2, p3, p4);
     } else {
+        paletteArgbSync();
         hiresPlanar2Chunky(hostRasterPixels(row, x), p1, p2, p3, p4);
         hostRasterWritten(row, x, 16);
     }
@@ -844,6 +845,12 @@ static uint8_t slotRunEnd[SLOT_LAST + 1];
 // host), 2..6 for the slot of an enabled plane, which dma_run() fetches
 // inline; 0 for anything else (called through the slot table).
 static uint8_t slotPlane[SLOT_LAST + 1];
+// frank-amiga: while the Copper executes (so every even slot may be its)
+// and the blitter is idle, an odd slot that is not active only offers
+// itself to the blitter and does nothing. slotCopperNext[h] is the first
+// slot >= h that is even or active; dma_run() jumps over the others
+// (copper-heavy lines: State of the Art's chunky part, colour per slot).
+static uint8_t slotCopperNext[SLOT_LAST + 1];
 static uint32_t slotNextKey = ~0u;
 
 static int slotIsActive(void (*f)(), int h) {
@@ -901,12 +908,17 @@ static void slotNextUpdate(void) {
     slotNextKey = key;
     void (**table)() = slotTable;
     int next = SLOT_LAST;
+    int copperNext = SLOT_LAST;
     int runEnd = SLOT_LAST;
     for (int h = SLOT_LAST; h >= 0; --h) {
         void (*f)() = table[h];
-        if (slotIsActive(f, h))
+        const int active = slotIsActive(f, h);
+        if (active)
             next = h;
         slotNext[h] = (uint8_t)next;
+        if (active || !(h & 1))
+            copperNext = h;
+        slotCopperNext[h] = (uint8_t)copperNext;
         if (!slotInFetchRun(f, h))
             runEnd = h;
         slotRunEnd[h] = (uint8_t)runEnd;
@@ -1190,11 +1202,18 @@ static inline void dmaEClock(int k) {
 // (which uses the beam directly), so it is stored once on return: the
 // position of the last slot run, as if it were written at every slot.
 #ifdef DMA_SLOT_STATS
-uint32_t dma_stat_slow, dma_stat_batched, dma_stat_skipped;
+uint32_t dma_stat_slow, dma_stat_batched, dma_stat_skipped, dma_stat_cop, dma_stat_blit;
+uint32_t dma_cyc_slots, dma_cyc_copper, dma_cyc_colour, dma_cyc_blit, dma_cyc_cpu, dma_cyc_dma, dma_cyc_wait, dma_cyc_eol, dma_cyc_p1;   // DWT cycles (PICO)
+#ifdef PICO_BUILD
+#define DWT_CYC (*(volatile uint32_t *)0xE0001004u)
+#else
+#define DWT_CYC 0u
+#endif
 #define DSTAT(x, n) (x += (n))
 #else
 #define DSTAT(x, n) ((void)0)
 #endif
+static int blitterState;   // defined with the blitter code below
 void dma_run(int slots){
     int beamV = -1, beamH = 0;  // last slot run
     while (slots-- > 0) {
@@ -1277,12 +1296,94 @@ void dma_run(int slots){
                     continue;
                 }
             }
+        } else if (slotRunEnd[internal.hPos] > internal.hPos + 1) {
+            // frank-amiga: the Copper executes inside the fetch window. Run
+            // the window's slots back to back as above, but every one of
+            // them (the Copper takes the even free slots, the blitter the
+            // odd ones), the plane fetches inline. A register write that
+            // changes the line's layout ends the run.
+            const int h = internal.hPos;
+            int end = slotRunEnd[h];
+            if (end > h + slots + 1)
+                end = h + slots + 1;
+            void (**table)() = slotTable;
+            const int hires = (chipset.bplcon0 & 0x8000) != 0;
+            const uint32_t clock0 = dmaSlotClock;
+            int x = h;
+            while (x < end) {
+                dmaSlotClock = clock0 + (uint32_t)(x - h);   // blit deadlines
+                switch (slotPlane[x]) {
+                case 1: {
+                    internal.hPos = x;
+#ifdef DMA_SLOT_STATS
+                    const uint32_t c0 = DWT_CYC;
+#endif
+                    if (hires)
+                        hiresPlane1Fetch();
+                    else
+                        loresPlane1Fetch();
+#ifdef DMA_SLOT_STATS
+                    dma_cyc_p1 += DWT_CYC - c0;
+#endif
+                    break;
+                }
+                case 2: FETCH_PLANE(2); break;
+                case 3: FETCH_PLANE(3); break;
+                case 4: FETCH_PLANE(4); break;
+                case 5: FETCH_PLANE(5); break;
+                case 6: FETCH_PLANE(6); break;
+                default:
+                    internal.hPos = x;
+                    table[x]();
+                    break;
+                }
+                ++x;
+                if (dmaLineStateDirty)
+                    break;
+            }
+            dmaSlotClock = clock0;
+            const int k = x - h;
+            if (x - 1 == bitplaneLine.lastCycle)
+                dmaFetchWindowComplete();
+            DSTAT(dma_stat_batched, (uint32_t)k);
+            internal.hPos = x;
+            slots -= k - 1;
+            beamV = internal.vPos;
+            beamH = x - 1;
+            dmaEClock(k);
+            continue;
+        } else if (blitterState == 0 && (chipset.dmaconr & 0x4240) != 0x4240) {
+            // The Copper executes and the blitter is idle: jump over the
+            // odd slots only the blitter could use (see slotCopperNext[]).
+            const int h = internal.hPos;
+            int next = slotCopperNext[h];
+            if (next > h) {
+                if (next > h + slots + 1)
+                    next = h + slots + 1;
+                const int k = next - h;
+                DSTAT(dma_stat_skipped, (uint32_t)k);
+                internal.hPos = next;
+                slots -= k - 1;
+                beamV = internal.vPos;
+                beamH = next - 1;
+                dmaEClock(k);
+                continue;
+            }
         }
 #endif
 
         // SDL_AtomicSet(&cpuWait, 1); // single-threaded on RP2350
         DSTAT(dma_stat_slow, 1u);
+#ifdef DMA_SLOT_STATS
+        if ((chipset.dmaconr & 0x280) == 0x280 && internal.copperCycle != 4 && internal.copperCycle != 3)
+            dma_stat_cop++;
+        if (blitterState != 0) dma_stat_blit++;
+        const uint32_t c0 = DWT_CYC;
+#endif
         slotTable[internal.hPos]();
+#ifdef DMA_SLOT_STATS
+        dma_cyc_slots += DWT_CYC - c0;
+#endif
 
         if (internal.hPos == bitplaneLine.lastCycle)
             dmaFetchWindowComplete();
@@ -1298,8 +1399,15 @@ void dma_run(int slots){
         beamV = internal.vPos;
         beamH = internal.hPos;
         // End of line (227 or 228 colour clocks).
-        if (++internal.hPos > lineLast)
+        if (++internal.hPos > lineLast) {
+#ifdef DMA_SLOT_STATS
+            const uint32_t c0 = DWT_CYC;
             dmaEndOfLine();
+            dma_cyc_eol += DWT_CYC - c0;
+#else
+            dmaEndOfLine();
+#endif
+        }
     }
     if (beamV >= 0)
         chipset.vhposr = (uint16_t)(beamV << 8 | beamH);
@@ -1348,13 +1456,23 @@ int dmaRunSlice(int *cpuBalance) {
     dmaSliceSlots = n;
     dmaCaught = 0;
     *cpuBalance += OMEGA_CPU_CYCLES_PER_SLOT * n;
+#ifdef DMA_SLOT_STATS
+    const uint32_t c0 = DWT_CYC;
+#endif
     if (*cpuBalance > 0) {
         dmaInCpu = 1;
         *cpuBalance -= m68k_execute(*cpuBalance);
         dmaInCpu = 0;
     }
+#ifdef DMA_SLOT_STATS
+    const uint32_t c1 = DWT_CYC;
+    dma_cyc_cpu += c1 - c0;
+#endif
     if (dmaCaught < n)
         dma_run(n - dmaCaught);
+#ifdef DMA_SLOT_STATS
+    dma_cyc_dma += DWT_CYC - c1;
+#endif
     return n;
 }
 
@@ -1407,9 +1525,16 @@ void evenCycle(void){
         // exit SKIP one compare position later and leave the loop.
         if (internal.hPos == (lineLast > 0xE2 ? 0xE1 : 0xE0))
             return;
+#ifdef DMA_SLOT_STATS
+        const uint32_t c0 = DWT_CYC;
+        const int took = copperExecute();
+        dma_cyc_copper += DWT_CYC - c0;
+        if (took == 1) return;
+#else
         if(copperExecute()==1){
             return;
         }
+#endif
     }
     
     //if the copper doesn't want the even cycle, give it to the odd cycle devices.
@@ -1428,7 +1553,13 @@ void oddCycle(void){
     // An idle Blitter (no blit started) does nothing; skip the call.
     if (blitterState == 0 && (chipset.dmaconr & 0x4240) != 0x4240)
         return;
+#ifdef DMA_SLOT_STATS
+    const uint32_t c0 = DWT_CYC;
     blitterExecute();
+    dma_cyc_blit += DWT_CYC - c0;
+#else
+    blitterExecute();
+#endif
     
     //A Free slot for CPU... but the CPU isn't currently bound to the DMA timing
     // SDL_AtomicSet(&cpuWait, 0); // single-threaded on RP2350
@@ -1841,8 +1972,10 @@ static void spriteRenderLine(void) {
                 continue;
             if (hostDirectActive)
                 hostDirectSprite(row, x, base, att, behind, a, b, c, d);
-            else
+            else {
+                paletteArgbSync();
                 spriteDrawArgb(row, x, base, att, behind, a, b, c, d);
+            }
         }
     }
 }
@@ -1989,6 +2122,7 @@ static inline void loresPlane1Fetch(void){
         hostDirectLoresFast(host.rasterRow, host.rasterX, chipset.bpl1dat, chipset.bpl2dat, chipset.bpl3dat, chipset.bpl4dat, chipset.bpl5dat, chipset.bpl6dat, chipset.bplcon0 & 0x800);
     } else {
         uint32_t *pixels = hostRasterPixels(host.rasterRow, host.rasterX);
+        paletteArgbSync();
         if(chipset.bplcon0 & 0x800){
             loresHAM2Chunky(pixels, chipset.bpl1dat, chipset.bpl2dat, chipset.bpl3dat, chipset.bpl4dat,chipset.bpl5dat, chipset.bpl6dat);
         }else{
@@ -2147,6 +2281,7 @@ static inline void hiresPlane1Fetch(void){
         hostDirectHiresFast(raster_row, host.rasterX, chipset.bpl1dat, chipset.bpl2dat, chipset.bpl3dat, chipset.bpl4dat);
     } else {
         uint32_t *line = hostRasterPixels(raster_row, host.rasterX);
+        paletteArgbSync();
         hiresPlanar2Chunky(line, chipset.bpl1dat, chipset.bpl2dat, chipset.bpl3dat, chipset.bpl4dat);
         hostRasterWritten(raster_row, host.rasterX, 16);
     }

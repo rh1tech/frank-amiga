@@ -1,3 +1,5 @@
+#include <time.h>
+#include <stdlib.h>
 // SDL-free desktop host layer for running the Omega core natively (no RP2350,
 // no PSRAM, no display hardware).  Renders planar->chunky into a plain malloc'd
 // framebuffer so the emulator core can be exercised head-less on a PC.
@@ -78,6 +80,18 @@ void hostInit(void) {
 
 void hostDisplay(void) {
     native_frame_counter++;
+    {   // frank-amiga: OMEGA_FRAME_TIMES=1 prints the host time of every 50 frames
+        static int on = -1;
+        static struct timespec t0;
+        if (on < 0) { on = getenv("OMEGA_FRAME_TIMES") != NULL; clock_gettime(CLOCK_MONOTONIC, &t0); }
+        if (on && native_frame_counter % 50 == 0) {
+            struct timespec t;
+            clock_gettime(CLOCK_MONOTONIC, &t);
+            const double ms = (t.tv_sec - t0.tv_sec) * 1e3 + (t.tv_nsec - t0.tv_nsec) / 1e6;
+            printf("FT %lu %.2f ms/frame\n", native_frame_counter, ms / 50.0);
+            t0 = t;
+        }
+    }
     rtg_shown = p2Showing();
     if (rtg_shown) {
         int w, h;

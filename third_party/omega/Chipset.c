@@ -110,6 +110,20 @@ uint32_t EHB2ARGB(uint16_t color){
     return 0;
 }
 
+volatile uint8_t paletteArgbDirty;
+
+// The ARGB palette from the colour registers (see setColour()).
+void paletteArgbSync(void) {
+    if (!paletteArgbDirty)
+        return;
+    paletteArgbDirty = 0;
+    for (int n = 0; n < 32; n++) {
+        const uint16_t c = (&chipset.color00)[n];
+        internal.palette[n] = OCS2ARGB(c);
+        internal.palette[n + 32] = EHB2ARGB(c);
+    }
+}
+
 uint16_t noRead(void){
     CHIPSET_STUB_LOG("can't read a Write only Register %s\n",regNames[debugChipAddress]);
     debugChipAddress = 0;
@@ -949,10 +963,21 @@ static void __attribute__((noinline)) COLOUR_FUNC(setColour)(unsigned n,
                                                              uint16_t value){
     _Static_assert(offsetof(Chipset_t, color31) - offsetof(Chipset_t, color00) ==
                    31 * sizeof(uint16_t), "colour registers not contiguous");
+#if defined(DMA_SLOT_STATS) && defined(PICO_BUILD)
+    extern uint32_t dma_cyc_colour;
+    const uint32_t c0 = *(volatile uint32_t *)0xE0001004u;
+#endif
     const uint16_t old = (&chipset.color00)[n];
     (&chipset.color00)[n] = value; //old register
+#ifdef PICO_BUILD
+    // frank-amiga: the board streams the colour registers themselves; the
+    // ARGB palette only feeds the rare fallback renderers, which rebuild it
+    // (paletteArgbSync()).
+    paletteArgbDirty = 1;
+#else
     internal.palette[n] = OCS2ARGB(value);
     internal.palette[n + 32] = EHB2ARGB(value);
+#endif
 #ifndef PICO_BUILD
     // frank-amiga: the 8-bit palette only feeds Omega's own renderer; the
     // board's slave streams colours to the master instead.
@@ -963,6 +988,9 @@ static void __attribute__((noinline)) COLOUR_FUNC(setColour)(unsigned n,
     // HDMI: the change takes effect at its beam position, mid-line too.
     if (hostDirectActive)
         hostDirectColour((int)n, old, value);
+#if defined(DMA_SLOT_STATS) && defined(PICO_BUILD)
+    dma_cyc_colour += *(volatile uint32_t *)0xE0001004u - c0;
+#endif
 }
 #define COLOUR(nn) \
     void COLOUR_FUNC(color##nn)(uint16_t value){ setColour(1##nn - 100, value); }
