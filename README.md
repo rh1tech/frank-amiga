@@ -36,7 +36,8 @@ card's test set on the board and reports fps, last PC and hang/reset flags
                             chip=512                       chip RAM KB: 512 | 1024 | 2048
                             slow=512                       slow RAM KB at $C00000: 0 | 512 | 1024
 /amiga/kick/                Kickstart images (your own licensed copies, or AROS)
-/amiga/adf/                 disk images
+/amiga/adf/                 disk images: .adf, and .scp flux images (copy protections
+                            such as Rob Northen Copylock work from these)
 ```
 
 At power-on the master uploads the configured ROMs and disks to the slave and
@@ -45,15 +46,19 @@ into the ADF file on the card about a second later.
 
 ## Controls
 
-- USB keyboard and mouse on the master's USB port. F12 opens the menu:
-  DF0/DF1 disk browser, Kickstart, reset, volume, keyboard joystick.
+- USB keyboard and mouse on the master's USB port. F11 opens the file
+  manager: walk the card, put a disk image (.adf/.scp, marked `*`) into DF0
+  or DF1 or boot from it, pick a Kickstart (`K`), and optionally make the
+  choice the power-on one (written to frank-amiga.ini). F12 opens the menu:
+  DF0/DF1 disk browser, Kickstart, reset, save/load state, volume, keyboard
+  joystick. The Amiga's Help key is on Insert.
 - Joysticks: USB gamepad 1 is the joystick in port 2 (games), gamepad 2 the
   one in port 1; d-pad or left stick, A fire, B second button. Without a pad,
   `joykeys` makes the arrows (Right Ctrl/Alt fire) or the numpad (0/. fire)
   port 2's joystick.
 - Console (UART0, 115200): `df0`/`df1 <path|none>` change disks, `kick`/`ext
   <path>` change ROMs and cold-start, `boot` rereads the ini, `reset` is
-  Ctrl-Amiga-Amiga, `type`/`key`/`mouse`/`joy` drive input, `osd`/`osdkey`,
+  Ctrl-Amiga-Amiga, `type`/`key`/`mouse`/`joy` drive input, `fm`/`osd`/`osdkey`,
   `vol`, `mem <chip KB> <slow KB>` (RAM, cold-start), `stats`.
 
 ## Status
