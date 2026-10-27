@@ -68,6 +68,20 @@ static int c1_dpf_delta;          // PF2 offset from PF1, image columns
 static bool c1_pf2pri;
 static void C1_FUNC(c1Record)(int y, int x0, int x1);
 
+// Colour numbers of a 6-bit DPF pixel: its playfields (0-7 each) and the
+// combined colour by priority (PF2PRI: 1 = PF2 in front).
+static uint8_t dpf_lut1[64], dpf_lut2[64], dpf_comp[2][64];
+static void C1_FUNC(dpfTables)(void) {
+    for (int v = 0; v < 64; ++v) {
+        const uint8_t a = (uint8_t)((v & 1) | ((v >> 1) & 2) | ((v >> 2) & 4));
+        const uint8_t b = (uint8_t)(((v >> 1) & 1) | ((v >> 2) & 2) | ((v >> 3) & 4));
+        dpf_lut1[v] = a;
+        dpf_lut2[v] = b;
+        dpf_comp[0][v] = a ? a : (b ? (uint8_t)(8u + b) : 0);
+        dpf_comp[1][v] = b ? (uint8_t)(8u + b) : a;
+    }
+}
+
 static void __attribute__((noinline)) C1_FUNC(dpfFlush)(void) {
     if (dpf_y < 0)
         return;
@@ -76,10 +90,12 @@ static void __attribute__((noinline)) C1_FUNC(dpfFlush)(void) {
     if (!c1_image || dpf_max <= dpf_min)
         return;
     uint8_t *line = c1_image + y * DVI_DIRECT_IMAGE_WIDTH;
+    const uint8_t *comp = dpf_comp[c1_pf2pri];
     for (int x = dpf_min; x < dpf_max; ++x) {
+        // Recombine the playfields into a 6-bit pixel for the table.
         const uint8_t a = dpf_pf1[x], b = dpf_pf2[x];
-        line[x] = c1_pf2pri ? (b ? (uint8_t)(8u + b) : a)
-                            : (a ? a : (b ? (uint8_t)(8u + b) : 0));
+        line[x] = comp[(a & 1) | (b & 1) << 1 | (a & 2) << 1 | (b & 2) << 2 |
+                       (a & 4) << 2 | (b & 4) << 3];
         dpf_pf1[x] = dpf_pf2[x] = 0;
     }
     const bool ham = c1_ham;
@@ -88,29 +104,62 @@ static void __attribute__((noinline)) C1_FUNC(dpfFlush)(void) {
     c1_ham = ham;
 }
 
+// Clips [x, x + width) of a block to the image; returns the first index.
+static inline int C1_FUNC(dpfClip)(int x, int width, int *end) {
+    int i0 = x < 0 ? -x : 0;
+    int i1 = width;
+    if (x + i1 > DVI_DIRECT_IMAGE_WIDTH)
+        i1 = DVI_DIRECT_IMAGE_WIDTH - x;
+    *end = i1;
+    return i0;
+}
+
 static void C1_FUNC(dpfPlace)(int y, int image_x, const uint8_t *pixels,
                               int width) {
-    if (y != dpf_y) {
+    static bool ready;
+    if (!ready) {
+        dpfTables();
+        ready = true;
+    }
+    if (y != dpf_y)
         dpfFlush();
+    // Playfields at the same scroll (the usual case): combine straight into
+    // the row.
+    if (c1_dpf_delta == 0 && dpf_y < 0) {
+        int i1;
+        const int i0 = dpfClip(image_x, width, &i1);
+        if (i1 <= i0)
+            return;
+        uint8_t *line = c1_image + y * DVI_DIRECT_IMAGE_WIDTH + image_x;
+        const uint8_t *comp = dpf_comp[c1_pf2pri];
+        for (int i = i0; i < i1; ++i)
+            line[i] = comp[pixels[i]];
+        const bool ham = c1_ham;
+        c1_ham = false;
+        c1Record(y, image_x + i0, image_x + i1);
+        c1_ham = ham;
+        return;
+    }
+    if (y != dpf_y) {
         dpf_y = y;
         dpf_min = DVI_DIRECT_IMAGE_WIDTH;
         dpf_max = 0;
     }
-    for (int i = 0; i < width; ++i) {
-        const uint8_t v = pixels[i];
-        const uint8_t pf1 = (uint8_t)((v & 1u) | ((v >> 1) & 2u) | ((v >> 2) & 4u));
-        const uint8_t pf2 = (uint8_t)(((v >> 1) & 1u) | ((v >> 2) & 2u) | ((v >> 3) & 4u));
-        const int x1 = image_x + i, x2 = x1 + c1_dpf_delta;
-        if (x1 >= 0 && x1 < DVI_DIRECT_IMAGE_WIDTH) {
-            dpf_pf1[x1] = pf1;
-            if (x1 < dpf_min) dpf_min = x1;
-            if (x1 + 1 > dpf_max) dpf_max = x1 + 1;
-        }
-        if (x2 >= 0 && x2 < DVI_DIRECT_IMAGE_WIDTH) {
-            dpf_pf2[x2] = pf2;
-            if (x2 < dpf_min) dpf_min = x2;
-            if (x2 + 1 > dpf_max) dpf_max = x2 + 1;
-        }
+    int i1;
+    int i0 = dpfClip(image_x, width, &i1);
+    if (i1 > i0) {
+        for (int i = i0; i < i1; ++i)
+            dpf_pf1[image_x + i] = dpf_lut1[pixels[i]];
+        if (image_x + i0 < dpf_min) dpf_min = image_x + i0;
+        if (image_x + i1 > dpf_max) dpf_max = image_x + i1;
+    }
+    const int x2 = image_x + c1_dpf_delta;
+    i0 = dpfClip(x2, width, &i1);
+    if (i1 > i0) {
+        for (int i = i0; i < i1; ++i)
+            dpf_pf2[x2 + i] = dpf_lut2[pixels[i]];
+        if (x2 + i0 < dpf_min) dpf_min = x2 + i0;
+        if (x2 + i1 > dpf_max) dpf_max = x2 + i1;
     }
 }
 

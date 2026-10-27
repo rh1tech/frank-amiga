@@ -25,7 +25,7 @@ def lookup(pc):
 
 import os
 SERIAL = os.environ.get('PROBE', 'E6635C08CB46BB26')
-cmds = ['-c', f'adapter serial {SERIAL}', '-c', 'adapter speed 4000', '-c', 'init', '-c', f'targets rp2350.cm{core}']
+cmds = ['-c', f'adapter serial {SERIAL}', '-c', 'adapter speed ' + os.environ.get('SWD_KHZ','4000') + '', '-c', 'init', '-c', f'targets rp2350.cm{core}']
 for _ in range(N):
     cmds += ['-c', 'echo p:[capture {mdw 0xe000101c 1}]']
 cmds += ['-c', 'exit']
