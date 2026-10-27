@@ -93,6 +93,7 @@ void   link_tx_start(link_t *l, const void *buf, size_t bytes);
 void   link_tx_start_ring(link_t *l, const void *buf, uint32_t ring_bits,
                           size_t total_bytes);
 bool   link_tx_busy(const link_t *l);
+void   link_tx_abort(link_t *l);
 /* Blocks until the DMA, the TX FIFO and the output shift register have
  * all drained, then drops VALID. Returns false on timeout. */
 bool   link_tx_finish(link_t *l, uint32_t timeout_us);

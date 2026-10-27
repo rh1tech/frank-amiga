@@ -183,6 +183,7 @@ static void fill_chunk(bool resync) {
 
 static void __not_in_flash_func(pump_loop)(void) {
     for (;;) {
+        link_db_set(sess.link, false);      /* idle: DB_SM low (see link_m_resync) */
         const uint16_t op = link_s_wait_ctrl(&sess, 1000);
         if (!op) continue;
         const link_hdr_t *hdr = link_rx_hdr(&sess);

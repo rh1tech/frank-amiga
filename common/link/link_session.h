@@ -52,6 +52,8 @@ bool link_m_send_ctrl(link_session_t *s, uint16_t op,
 
 /* Receive one control frame into s->ctrl_rx. Validates magic and CRC. */
 bool link_m_recv_ctrl(link_session_t *s);
+/* After a failed transaction: bring the slave back to waiting for a control frame. */
+void link_m_resync(link_session_t *s);
 
 /* Linear bulk transfers. `bytes` must be a multiple of 4 and the buffer
  * 4-byte aligned: the PIO FIFOs are 32 bits wide and autopull/autopush

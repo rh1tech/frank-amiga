@@ -40,6 +40,10 @@ bool link_m_send_ctrl(link_session_t *s, uint16_t op,
                       const void *payload, uint32_t payload_len) {
     link_frame_build(s->ctrl_tx, op, ++s->seq, arg0, arg1, payload, payload_len);
 
+    /* The slave must be idle (DB_SM low): a doorbell raised while it still
+     * finishes the last transaction would be taken for the wrong phase. */
+    if (!link_db_wait(s->link, false, hs_timeout(s))) return false;
+
     /* "Master ready to send." */
     uint64_t h0 = time_us_64();
     link_db_set(s->link, true);
@@ -66,6 +70,17 @@ bool link_m_send_ctrl(link_session_t *s, uint16_t op,
     link_hs_n++;
 
     return ok;
+}
+
+void link_m_resync(link_session_t *s) {
+    /* After a failed transaction the two sides may disagree on the phase.
+     * DB_MS held low outlasts every wait of the slave's (the longest is a
+     * control frame's receive), which leaves it back waiting for the next
+     * control frame. */
+    link_db_set(s->link, false);
+    link_tx_abort(s->link);
+    link_rx_abort(s->link);
+    busy_wait_us(LINK_CTRL_TIMEOUT_US + 20000u);
 }
 
 bool link_m_recv_ctrl(link_session_t *s) {

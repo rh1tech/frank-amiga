@@ -77,6 +77,8 @@ bool stream_poll(void) {
     stream_stats.busy_us += time_us_64() - t0;
     if (!ok) {
         stream_stats.link_errors++;
+        link_m_resync(sess);
+        resync = true;      /* the chunk is lost: restart at a frame */
         return false;
     }
     const link_stream_hdr_t *h = (const link_stream_hdr_t *)chunk;

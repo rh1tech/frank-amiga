@@ -179,6 +179,11 @@ void link_tx_start_ring(link_t *l, const void *buf, uint32_t ring_bits,
                           &l->pio->txf[l->sm_tx], buf, words, true);
 }
 
+void link_tx_abort(link_t *l) {
+    dma_channel_abort(l->dma_tx);
+    gpio_put(l->tx_valid, 0);
+}
+
 bool link_tx_busy(const link_t *l) {
     return dma_channel_is_busy(l->dma_tx);
 }
