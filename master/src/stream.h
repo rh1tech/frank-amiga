@@ -26,5 +26,7 @@ bool stream_input(uint8_t type, uint8_t a, uint8_t b, uint8_t c);
 
 /* Set when the slave reports written disk tracks (media_poll() saves them). */
 extern volatile bool stream_disk_dirty;
+/* Set when a flux-image drive wants a track (media_poll() sends it). */
+extern volatile bool stream_track_wanted;
 
 #endif

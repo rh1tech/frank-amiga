@@ -28,6 +28,8 @@
 #define LINK_STREAM_NO_FRAME     0xFFFFu
 /* In `words`: a disk has written tracks to save (link_proto.h DIRTY). */
 #define LINK_STREAM_WORDS_DIRTY  0x8000u
+/* In `words`: a flux-image drive wants a track (link_proto.h TRACKREQ). */
+#define LINK_STREAM_WORDS_TRACK  0x4000u
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;

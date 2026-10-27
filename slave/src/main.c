@@ -346,10 +346,12 @@ int main(void) {
         sleep_ms(100);                  /* the master may upload and BOOT */
     }
     const uint8_t *ext = NULL, *adf = NULL, *adf1 = NULL;
+    uint32_t rom_flags = 0;
     bool df1_on = false;
     if (rom) {
         ext = upload_ext_rom();
         const uint32_t flags = upload_boot_flags();
+        rom_flags = flags;
         if (flags & LINK_BOOT_DF0_DISK) adf = upload_df(0);
         if (flags & LINK_BOOT_DF1_DISK) adf1 = upload_df(1);
         df1_on = (flags & LINK_BOOT_DF1) != 0;
@@ -377,7 +379,12 @@ int main(void) {
     /* DF0: the disk if there is one. Otherwise an empty drive: every track
      * reads as a sync word and nothing else, so trackdisk times out and
      * Kickstart shows its insert-disk screen. */
-    if (adf && floppyMountADF(0, adf, FLOPPY_ADF_SIZE)) {
+    if (rom_flags & LINK_BOOT_DF0_EXT) {
+        floppyMountExternal(0);
+        df[0].hasDisk = 1;
+        df[0].pra &= 0xFB;
+        printf("DF0: flux image\n");
+    } else if (adf && floppyMountADF(0, adf, FLOPPY_ADF_SIZE)) {
         df[0].hasDisk = 1;
         df[0].pra &= 0xFB;
         printf("DF0: disk inserted\n");
@@ -389,7 +396,12 @@ int main(void) {
     if (df1_on) {
         floppyConnect(1);
         /* As DF0 above: floppyInsert() waits for the drive's ID mode. */
-        if (adf1 && floppyMountADF(1, adf1, FLOPPY_ADF_SIZE)) {
+        if (rom_flags & LINK_BOOT_DF1_EXT) {
+            floppyMountExternal(1);
+            df[1].hasDisk = 1;
+            df[1].pra &= 0xFB;
+            printf("DF1: flux image\n");
+        } else if (adf1 && floppyMountADF(1, adf1, FLOPPY_ADF_SIZE)) {
             df[1].hasDisk = 1;
             df[1].pra &= 0xFB;
             printf("DF1: disk inserted\n");

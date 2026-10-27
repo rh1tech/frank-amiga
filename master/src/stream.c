@@ -39,7 +39,7 @@ void stream_start(void) {
 
 void stream_stop(void) { running = false; }
 
-volatile bool stream_disk_dirty;
+volatile bool stream_disk_dirty, stream_track_wanted;
 
 bool stream_input(uint8_t type, uint8_t a, uint8_t b, uint8_t c) {
     if (batch.count >= 24u) return false;
@@ -49,11 +49,11 @@ bool stream_input(uint8_t type, uint8_t a, uint8_t b, uint8_t c) {
 
 static bool chunk_valid(const link_stream_hdr_t *h) {
     if (h->magic != LINK_STREAM_MAGIC ||
-        (h->words & ~LINK_STREAM_WORDS_DIRTY) > LINK_STREAM_PAYLOAD_WORDS)
+        (h->words & ~(LINK_STREAM_WORDS_DIRTY | LINK_STREAM_WORDS_TRACK)) > LINK_STREAM_PAYLOAD_WORDS)
         return false;
     const uint32_t *p = chunk + LINK_STREAM_HDR_WORDS;
     uint32_t x = 0;
-    const uint32_t n = h->words & ~LINK_STREAM_WORDS_DIRTY;
+    const uint32_t n = h->words & ~(LINK_STREAM_WORDS_DIRTY | LINK_STREAM_WORDS_TRACK);
     for (uint32_t i = 0; i < n; i++) x ^= p[i];
     return (x ^ h->seq) == h->check;
 }
@@ -83,8 +83,9 @@ bool stream_poll(void) {
         return false;
     }
     const uint32_t *payload = chunk + LINK_STREAM_HDR_WORDS;
-    const uint32_t words = h->words & ~LINK_STREAM_WORDS_DIRTY;
+    const uint32_t words = h->words & ~(LINK_STREAM_WORDS_DIRTY | LINK_STREAM_WORDS_TRACK);
     if (h->words & LINK_STREAM_WORDS_DIRTY) stream_disk_dirty = true;
+    if (h->words & LINK_STREAM_WORDS_TRACK) stream_track_wanted = true;
     uint32_t start = 0;
     if (h->seq != expect_seq && !resync) {
         stream_stats.seq_gaps++;

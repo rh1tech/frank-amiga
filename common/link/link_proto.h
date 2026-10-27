@@ -67,6 +67,13 @@ enum {
     /* STATE: arg0 = 0 save / 1 load, arg1 = slot; done at the next frame
      * end (the slave's console reports it). */
     LINK_OP_STATE        = 0x007E,
+    /* Flux-image drives (INSERT arg1 = 2: the master sends their tracks):
+     *   TRACKREQ   the ack's arg0 = drive or 0xFF, arg1 = track wanted
+     *              (cylinder * 2 + side)
+     *   TRACKDATA  arg0 = drive | track << 8, arg1 = bytes (MFM, multiple of
+     *              4, <= LINK_UPLOAD_CHUNK), then the bulk from the master */
+    LINK_OP_TRACKREQ     = 0x0080,
+    LINK_OP_TRACKDATA    = 0x0082,
     LINK_OP_DOWNLOAD     = 0x007C,
 };
 #define LINK_DISK_TRACKS 160u
@@ -81,6 +88,8 @@ enum {
     LINK_BOOT_DF1 = 1,       /* DF1 connected                          */
     LINK_BOOT_DF0_DISK = 2,  /* DF0 has the uploaded disk               */
     LINK_BOOT_DF1_DISK = 4,  /* DF1 has the uploaded disk               */
+    LINK_BOOT_DF0_EXT = 0x1000, /* DF0 / DF1 hold flux images (tracks from */
+    LINK_BOOT_DF1_EXT = 0x2000, /* the master, TRACKREQ/TRACKDATA)         */
     /* bits 8-9: chip RAM (0 512 KB, 1 1 MB, 2 2 MB); bits 10-11: slow RAM
      * at 0xC00000 (0 512 KB, 1 none, 2 1 MB). 0 is an A500's 512 + 512. */
     LINK_BOOT_CHIP_SHIFT = 8,

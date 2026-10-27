@@ -430,7 +430,22 @@ static const uint8_t *drive_adf[FLOPPY_DISK_DRIVES];
 static int cached_cylinder[FLOPPY_DISK_DRIVES] = { -1, -1 };
 static int cached_side[FLOPPY_DISK_DRIVES] = { -1, -1 };
 
+// frank-amiga: drives whose tracks come as MFM from the master (flux images,
+// decoded there track by track): the track the head is on is asked for and
+// reads as nothing until it arrives (as a drive's head settling).
+static volatile int ext_mode[FLOPPY_DISK_DRIVES];
+static volatile int ext_want[FLOPPY_DISK_DRIVES] = { -1, -1 };
+static volatile int ext_have[FLOPPY_DISK_DRIVES] = { -1, -1 };
+static volatile uint32_t ext_len[FLOPPY_DISK_DRIVES];
+
 static int floppyEnsureTrackCached(int drive) {
+    if (drive < FLOPPY_DISK_DRIVES && ext_mode[drive]) {
+        const int t = df[drive].cylinder * 2 + df[drive].side;
+        if (ext_have[drive] == t)
+            return 1;
+        ext_want[drive] = t;
+        return 0;
+    }
     if (drive >= FLOPPY_DISK_DRIVES || !drive_adf[drive])
         return 0;
     if (cached_cylinder[drive] == df[drive].cylinder &&
@@ -453,9 +468,45 @@ static void floppyEmptyTrack(int drive) {
         track[i] = 0;
 }
 
+int floppyMountExternal(int drive) {
+    if (drive >= FLOPPY_DISK_DRIVES)
+        return 0;
+    drive_adf[drive] = NULL;
+    ext_have[drive] = ext_want[drive] = -1;
+    ext_len[drive] = 12668;
+    ext_mode[drive] = 1;
+    df[drive].mfmData = drive_track_cache(drive);
+    df[drive].hasDisk = 0;
+    df[drive].pra &= (uint8_t)~0x08;           // /WPRO: write protected
+    floppyEmptyTrack(drive);
+    return 1;
+}
+
+int floppyTrackWanted(int *drive, int *track) {
+    for (int d = 0; d < FLOPPY_DISK_DRIVES; d++)
+        if (ext_mode[d] && ext_want[d] >= 0 && ext_want[d] != ext_have[d]) {
+            *drive = d;
+            *track = ext_want[d];
+            return 1;
+        }
+    return 0;
+}
+
+uint8_t *floppyTrackBuffer(int drive) { return drive_track_cache(drive); }
+
+void floppyTrackLoaded(int drive, int track, uint32_t len) {
+    ext_len[drive] = len < 1000u ? 12668u : len;
+    __atomic_store_n(&ext_have[drive], track, __ATOMIC_RELEASE);
+}
+
+static inline uint32_t floppyTrackLength(int drive) {
+    return drive < FLOPPY_DISK_DRIVES && ext_mode[drive] ? ext_len[drive] : 12668u;
+}
+
 int floppyMountADF(int drive, const uint8_t *adf, uint32_t size) {
     if (drive >= FLOPPY_DISK_DRIVES || !adf || size != FLOPPY_ADF_SIZE)
         return 0;
+    ext_mode[drive] = 0;
     drive_adf[drive] = adf;
     cached_cylinder[drive] = -1;
     cached_side[drive] = -1;
@@ -496,7 +547,7 @@ static uint32_t write_pos;
 
 void floppyWriteByte(uint8_t b) {
     const int d = driveSelected;
-    if (d >= FLOPPY_DISK_DRIVES || !df[d].hasDisk || write_pos >= 0x4000)
+    if (d >= FLOPPY_DISK_DRIVES || !df[d].hasDisk || ext_mode[d] || write_pos >= 0x4000)
         return;
     ((volatile uint8_t *)drive_track_cache(d))[write_pos++] = b;
 }
@@ -611,7 +662,11 @@ uint8_t floppyDataRead(){ //this function should be called by the DMA
     
     df[driveSelected].index +=1;
 
+#ifdef PICO_BUILD
+    if ((uint32_t)df[driveSelected].index >= floppyTrackLength(driveSelected)) {
+#else
     if(df[driveSelected].index>12667){ //ADF track has 12798 bytes, but on a normal AmigaOS disk 12668 are used.
+#endif
         df[driveSelected].index= 0;
         CIAIndex(&CIAB);    // generate CIAB index interupt
         
@@ -660,6 +715,8 @@ void floppyInsert(int drive){
 #ifdef PICO_BUILD
         if (drive_adf[drive] && !floppyEnsureTrackCached(drive))
             return;
+        if (drive < FLOPPY_DISK_DRIVES && ext_mode[drive])
+            floppyEnsureTrackCached(drive);     // ask for it now
 #endif
         df[drive].hasDisk = 1;
         df[drive].pra &= 0xFB;      // /CHNG=0 (change: disk inserted)

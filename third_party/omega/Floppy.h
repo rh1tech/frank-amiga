@@ -61,6 +61,13 @@ uint8_t floppyDataRead();
 void floppyInsert(int);
 // frank-amiga: makes DF1 present (before Kickstart probes the drives).
 void floppyConnect(int drive);
+// frank-amiga: a drive whose tracks the master sends as MFM (flux images):
+// mount it; the track wanted (cylinder * 2 + side), if any, for the link;
+// where it goes and that it arrived (`len` bytes).
+int floppyMountExternal(int drive);
+int floppyTrackWanted(int *drive, int *track);
+uint8_t *floppyTrackBuffer(int drive);
+void floppyTrackLoaded(int drive, int track, uint32_t len);
 // frank-amiga: disk writes (DSKLEN WRITE). Bytes of the written MFM stream,
 // then the end of the transfer: its sectors go into the selected drive's
 // ADF, which becomes dirty (floppyDirty, for the master to save).

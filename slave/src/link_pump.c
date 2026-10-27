@@ -172,7 +172,9 @@ static void fill_chunk(bool resync) {
     host_ring_consume(n);
     h->magic = LINK_STREAM_MAGIC;
     h->seq = ++chunk_seq;
-    h->words = (uint16_t)(n | (floppyDirty[0] | floppyDirty[1] ? LINK_STREAM_WORDS_DIRTY : 0u));
+    int td, tt;
+    h->words = (uint16_t)(n | (floppyDirty[0] | floppyDirty[1] ? LINK_STREAM_WORDS_DIRTY : 0u) |
+                          (floppyTrackWanted(&td, &tt) ? LINK_STREAM_WORDS_TRACK : 0u));
     h->frame_off = frame_off;
     h->check = check ^ chunk_seq;
     pump_words += n;

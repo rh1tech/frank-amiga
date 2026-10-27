@@ -64,6 +64,7 @@ static uint32_t target_max(uint32_t target) {
 static volatile bool hold_req, held, running;
 static volatile int insert_req = -1;      /* drive to (re)insert, or -1 */
 static volatile bool eject_only;          /* ... or just to empty */
+static volatile bool insert_ext;          /* ... or a flux image (tracks from the master) */
 
 void upload_core0_frame(void) {
     if (hold_req) {
@@ -84,7 +85,11 @@ void upload_core0_frame(void) {
         } else {
             const volatile upload_rec_t *r = rec();
             floppyConnect(d);
-            if (!eject_only && r->size[target] == FLOPPY_ADF_SIZE &&
+            if (!eject_only && insert_ext && floppyMountExternal(d)) {
+                floppyInsert(d);
+                if (!df[d].hasDisk) { df[d].hasDisk = 1; df[d].pra &= 0xFB; }
+                printf("upload: DF%d flux image inserted\n", d);
+            } else if (!eject_only && r->size[target] == FLOPPY_ADF_SIZE &&
                 floppyMountADF(d, target_base(target), FLOPPY_ADF_SIZE)) {
                 floppyInsert(d);
                 if (!df[d].hasDisk) {   /* never identified (connected late) */
@@ -206,7 +211,26 @@ bool upload_handle(link_session_t *s, uint16_t op) {
         savestate_request(h->arg0 != 0, (int)h->arg1);
         link_s_send_ctrl(s, LINK_OP_STATE | 1, 0, 0, NULL, 0);
         return true;
+    case LINK_OP_TRACKREQ: {
+        int d = 0xFF, t = 0;
+        if (!floppyTrackWanted(&d, &t)) d = 0xFF;
+        link_s_send_ctrl(s, LINK_OP_TRACKREQ | 1, (uint32_t)d, (uint32_t)t, NULL, 0);
+        return true;
+    }
+    case LINK_OP_TRACKDATA: {
+        const int d = (int)(h->arg0 & 0xFF), t = (int)(h->arg0 >> 8);
+        const uint32_t n = h->arg1;
+        bool ok = d < 2 && n && n <= 0x4000u && n <= LINK_UPLOAD_CHUNK && !(n & 3u);
+        if (ok) ok = link_s_bulk_recv(s, bounce, n);
+        if (ok) {
+            memcpy(floppyTrackBuffer(d), bounce, n);
+            floppyTrackLoaded(d, t, n);
+        }
+        link_s_send_ctrl(s, LINK_OP_TRACKDATA | 1, ok, 0, NULL, 0);
+        return true;
+    }
     case LINK_OP_INSERT:
+        insert_ext = h->arg1 == 2;
         eject_only = h->arg1 == 0;
         insert_req = (int)h->arg0;
         link_s_send_ctrl(s, LINK_OP_INSERT | 1, 0, 0, NULL, 0);

@@ -28,6 +28,7 @@
 #include "link_proto.h"
 #include "stream.h"
 #include "usb_amiga.h"
+#include "scp.h"
 
 #define INI_PATH "0:/amiga/frank-amiga.ini"
 
@@ -69,8 +70,17 @@ static bool ctrl(uint16_t op, uint32_t a0, uint32_t a1) {
            link_rx_hdr(sess)->op == (uint16_t)(op | 1u);
 }
 
+/* Flux images in DF0/DF1: their tracks go to the slave as it asks. */
+static scp_t scp[2];
+
+static bool is_scp(const char *path) {
+    const size_t n = strlen(path);
+    return n > 4 && !strcasecmp(path + n - 4, ".scp");
+}
+
 bool media_upload(uint32_t target, const char *path) {
     if (!media_mount()) return false;
+
     /* A running slave first parks its emulation at a frame boundary (up to
      * a frame) before it answers; the stream's 20 ms is too tight. */
     const uint32_t saved_timeout = sess->handshake_timeout_us;
@@ -167,10 +177,17 @@ bool media_boot(void) {
     const uint32_t chip = media_config.chip_kb >= 2048 ? 2u : media_config.chip_kb >= 1024 ? 1u : 0u;
     const uint32_t slow = media_config.slow_kb == 0 ? 1u : media_config.slow_kb >= 1024 ? 2u : 0u;
     flags |= chip << LINK_BOOT_CHIP_SHIFT | slow << LINK_BOOT_SLOW_SHIFT;
-    if (ok && media_config.df0[0] && media_upload(LINK_UP_DF0, media_config.df0))
-        flags |= LINK_BOOT_DF0_DISK;
-    if (ok && media_config.df1[0] && media_upload(LINK_UP_DF1, media_config.df1))
-        flags |= LINK_BOOT_DF1_DISK;
+    for (int d = 0; d < 2 && ok; d++) {
+        const char *path = d ? media_config.df1 : media_config.df0;
+        scp_close(&scp[d]);
+        if (!path[0]) continue;
+        if (is_scp(path)) {
+            if (scp_open(&scp[d], path) || (media_remount() && scp_open(&scp[d], path)))
+                flags |= d ? LINK_BOOT_DF1_EXT : LINK_BOOT_DF0_EXT;
+        } else if (media_upload(d ? LINK_UP_DF1 : LINK_UP_DF0, path)) {
+            flags |= d ? LINK_BOOT_DF1_DISK : LINK_BOOT_DF0_DISK;
+        }
+    }
     if (ok) ok = ctrl(LINK_OP_BOOT, flags, 0);
     printf("media: boot %s\n", ok ? "sent" : "FAILED");
     return ok;
@@ -178,6 +195,24 @@ bool media_boot(void) {
 
 bool media_insert(int drive, const char *path) {
     char *dst = drive ? media_config.df1 : media_config.df0;
+    if (strcmp(path, "none") && is_scp(path)) {
+        char p[128];
+        prefix_path(p, sizeof p, path);
+        if (!scp_open(&scp[drive], p) && !(media_remount() && scp_open(&scp[drive], p))) {
+            printf("media: %s is not an SCP image\n", p);
+            return false;
+        }
+        stream_stop();
+        const bool ok = ctrl(LINK_OP_INSERT, (uint32_t)drive, 2);
+        stream_start();
+        printf("media: DF%d flux image %s %s\n", drive, p, ok ? "inserted" : "FAILED");
+        if (ok) {
+            snprintf(dst, 128, "%s", p);
+            if (drive) media_config.drive1 = true;
+        }
+        return ok;
+    }
+    scp_close(&scp[drive]);
     if (!strcmp(path, "none")) {             /* eject */
         stream_stop();
         const bool ok = ctrl(LINK_OP_INSERT, (uint32_t)drive, 0);
@@ -202,6 +237,8 @@ bool media_insert(int drive, const char *path) {
 static bool save_drive(int drive) {
     const char *path = drive ? media_config.df1 : media_config.df0;
     if (!ctrl(LINK_OP_DIRTY, (uint32_t)drive, 0)) return false;
+    /* A disk decoded from a flux image keeps its writes in memory only. */
+    if (is_scp(path)) path = "";
     const uint32_t tracks = link_rx_hdr(sess)->arg0;
     if (!tracks) return true;
     uint8_t map[LINK_DISK_TRACKS / 8];
@@ -231,7 +268,29 @@ bool media_state(bool load) {
     return ctrl(LINK_OP_STATE, load ? 1u : 0u, 0);
 }
 
+/* The slave's flux-image drive wants a track: decode and send it. */
+static void serve_tracks(void) {
+    for (int guard = 0; guard < 2; guard++) {
+        if (!ctrl(LINK_OP_TRACKREQ, 0, 0)) return;
+        const uint32_t d = link_rx_hdr(sess)->arg0, t = link_rx_hdr(sess)->arg1;
+        if (d > 1 || !scp[d].open) return;
+        const uint32_t n = scp_track(&scp[d], (int)t, buf, sizeof buf);
+        if (!n) return;
+        const bool ok = link_m_send_ctrl(sess, LINK_OP_TRACKDATA, d | t << 8, n, NULL, 0) &&
+                        link_m_bulk_send(sess, buf, n) && link_m_recv_ctrl(sess) &&
+                        link_rx_hdr(sess)->op == (LINK_OP_TRACKDATA | 1u) && link_rx_hdr(sess)->arg0;
+        if (!ok) {
+            printf("media: DF%lu track %lu not delivered\n", (unsigned long)d, (unsigned long)t);
+            return;
+        }
+    }
+}
+
 void media_poll(void) {
+    if (stream_track_wanted) {
+        stream_track_wanted = false;
+        serve_tracks();
+    }
     /* Save a second after the slave reports writes: a game's save is a
      * burst of tracks, taken in one go between two stream requests. */
     static uint64_t dirty_since;
