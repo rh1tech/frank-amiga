@@ -1214,6 +1214,14 @@ uint32_t dma_cyc_slots, dma_cyc_copper, dma_cyc_colour, dma_cyc_blit, dma_cyc_cp
 #define DSTAT(x, n) ((void)0)
 #endif
 static int blitterState;   // defined with the blitter code below
+// The slot after x in a Copper run (< end): with the blitter idle, odd
+// slots nothing could use are jumped over (see slotCopperNext[]).
+static inline int dmaCopperStep(int x, int end) {
+    if (blitterState != 0 || (chipset.dmaconr & 0x4240) == 0x4240)
+        return x + 1;
+    const int next = slotCopperNext[x + 1];
+    return next < end ? next : end;
+}
 void dma_run(int slots){
     int beamV = -1, beamH = 0;  // last slot run
     while (slots-- > 0) {
@@ -1352,7 +1360,7 @@ void dma_run(int slots){
                     break;
                 }
                 }
-                ++x;
+                x = dmaCopperStep(x, end);
                 if (dmaLineStateDirty)
                     break;
             }
@@ -1416,7 +1424,7 @@ void dma_run(int slots){
                     }
                     if (x == bitplaneLine.lastCycle)
                         dmaFetchWindowComplete();
-                    ++x;
+                    x = dmaCopperStep(x, end);
                     if (dmaLineStateDirty || slotRunEnd[x] > x + 1)
                         break;
                 }
