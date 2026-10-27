@@ -960,7 +960,7 @@ SPRITE_REGISTERS(7)
 #else
 #define COLOUR_FUNC(name) name
 #endif
-static void __attribute__((noinline)) COLOUR_FUNC(setColour)(unsigned n,
+void __attribute__((noinline)) COLOUR_FUNC(setColour)(unsigned n,
                                                              uint16_t value){
     _Static_assert(offsetof(Chipset_t, color31) - offsetof(Chipset_t, color00) ==
                    31 * sizeof(uint16_t), "colour registers not contiguous");

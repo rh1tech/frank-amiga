@@ -559,6 +559,8 @@ extern volatile uint8_t paletteArgbDirty;
 // compared them with core 1's palette, a bit each.
 extern uint32_t paletteChanged;
 void paletteArgbSync(void);
+// COLOR00..31 write (register n), as the COLORxx entry points.
+void setColour(unsigned n, uint16_t value);
 extern uint8_t spriteArmed;  // bit n: sprite n armed (SPRxDATA written)
 
 void ChipsetInit();

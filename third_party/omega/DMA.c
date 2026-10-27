@@ -2408,6 +2408,12 @@ int copperExecute(){
                 internal.copperCycle = 9;
                 return 1;
             }
+            // frank-amiga: colour registers (most Copper MOVEs) straight
+            // to setColour(), past the register table and COLORxx.
+            if ((unsigned)internal.IR1 - 0xC0u < 32u) {
+                setColour((unsigned)internal.IR1 - 0xC0u, internal.IR2);
+                return 1;
+            }
             putChipReg16[internal.IR1](internal.IR2);
             return 1;
             break;
