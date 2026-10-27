@@ -255,6 +255,12 @@ static void cmd_fluxdump(int argc, char **argv) {
            (unsigned long)(timing & 0xFFFFu), (unsigned long)(timing >> 16));
 }
 
+/* sdhold: bench, keep the track cache still for a file staged over it. */
+static void cmd_sdhold(int argc, char **argv) {
+    (void)argc; (void)argv;
+    media_bench_hold();
+}
+
 /* scpraw <drive> <track>: bench, the track's raw SCP block to PSRAM 0x7C0000. */
 static void cmd_scpraw(int argc, char **argv) {
     if (argc < 3) return;
@@ -400,6 +406,7 @@ static const console_cmd_t cmds[] = {
     { "key",    cmd_key,    "key <hex> [up|down|tap]: Amiga raw keycode" },
     { "mouse",  cmd_mouse,  "mouse <dx> <dy> [buttons]" },
     { "state",  cmd_state,  "state save|load: savestate (slave PSRAM)" },
+    { "sdhold", cmd_sdhold, "sdhold: bench, pause flux decoding until the next sdput" },
     { "scpraw", cmd_scpraw, "scpraw <drive> <track>: bench, raw SCP track to PSRAM 0x7C0000" },
     { "fluxdump", cmd_fluxdump, "fluxdump <drive> <track>|all: bench, MFM tracks into the cache" },
     { "usb",    cmd_usb,    "usb: connected keyboard, mouse, gamepads" },

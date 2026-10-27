@@ -9,7 +9,7 @@ set -u
 cd "$(dirname "$0")/.."
 disk=${1:?usage: hw_triage.sh disk.adf [seconds]}; secs=${2:-90}
 name=${disk%.adf}; OUT=${OUT:-/tmp/hw_triage}/$name; rm -rf $OUT; mkdir -p $OUT
-python3 tools/uart.py master send "df0 /amiga/adf/$disk\r" --seconds 20 --until "^OK" >/dev/null
+python3 tools/uart.py master send "df0 ${DIR:-/amiga/adf}/$disk\r" --seconds 20 --until "^OK" >/dev/null
 python3 tools/uart.py master send "kick\r" --seconds 3 --until "^OK" | grep -o "kick=[^ ]*" | read k
 python3 tools/uart.py master send "kick ${k#kick=}\r" --seconds 25 --until "^OK" >/dev/null
 sleep 7

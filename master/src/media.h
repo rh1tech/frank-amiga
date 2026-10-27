@@ -35,6 +35,8 @@ bool media_insert(int drive, const char *path);
 bool media_state(bool load);
 /* Bench: a flux image's track as MFM into master PSRAM 0x100000; bytes. */
 uint32_t media_scp_raw(int drive, int track);
+/* Bench: stop decoding flux tracks into the cache until the next sdput. */
+void media_bench_hold(void);
 uint32_t media_flux_dump(int drive, int track, uint32_t *timing);
 /* Main loop: saves written disk tracks back to their ADF files. */
 void media_poll(void);

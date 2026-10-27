@@ -359,8 +359,12 @@ static void serve_tracks(void) {
 /* One background step: a slice of a track's flux from the card (4 KB, a
  * couple of ms), or its decoding at the end. The stream takes one chunk a
  * main-loop pass, so the steps get a third of the time at most. */
+static bool bench_hold;     /* sdhold: the bench stages a file over the cache */
+void media_bench_hold(void) { bench_hold = true; }
+
 static void prefetch_step(void) {
     static int bg_d = -1;
+    if (bench_hold) return;
     static uint64_t next_us;
     const uint64_t now = time_us_64();
     if (now < next_us) return;
@@ -430,6 +434,7 @@ bool media_sdput(uint32_t offset, uint32_t size, const char *path) {
     f_close(&f);
     printf("media: wrote %lu bytes to %s, crc %08lx %s\n", (unsigned long)size, p,
            (unsigned long)crc32_update(0, src, size), ok ? "ok" : "FAILED");
+    bench_hold = false;
     return ok;
 }
 
