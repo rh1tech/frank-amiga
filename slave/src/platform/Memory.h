@@ -88,6 +88,12 @@ extern uint32_t chip_bank_swaps;
 // ── public API ───────────────────────────────────────────────────────────
 // Called once at startup; clears chip RAM and mirrors ROM if needed.
 void memory_init(void);
+/* frank-amiga: the machine's RAM before memory_init(): chip RAM 512 KB,
+ * 1 MB or 2 MB (smaller sizes mirror, as Agnus' address lines do) and slow
+ * RAM at 0xC00000 (0, 512 KB or 1 MB). Default: an A500, 512 KB + 512 KB. */
+void memory_configure(uint32_t chip_bytes, uint32_t slow_bytes);
+extern uint32_t chip_ram_size, slow_ram_size;
+extern uint8_t *slow_ram;
 // Select a 256 KB or 512 KB Kickstart image already resident in memory.
 // Returns 1 when accepted; a 256 KB image is mirrored by address decoding.
 int memory_set_rom(const uint8_t *data, uint32_t size);

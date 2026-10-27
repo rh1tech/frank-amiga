@@ -222,6 +222,19 @@ static void cmd_key(int argc, char **argv) {
     if (strcmp(what, "down")) input_key(code, true);
 }
 
+static void wait_slave_and_stream(void);
+
+/* mem <chip KB> <slow KB>: the machine's RAM, then cold-start. */
+static void cmd_mem(int argc, char **argv) {
+    if (argc < 3) {
+        printf("chip=%u slow=%u\n", media_config.chip_kb, media_config.slow_kb);
+        return;
+    }
+    media_config.chip_kb = (uint16_t)atoi(argv[1]);
+    media_config.slow_kb = (uint16_t)atoi(argv[2]);
+    if (media_boot()) wait_slave_and_stream(); else stream_start();
+}
+
 /* joy <port 0|1> <bits: 1 up 2 down 4 left 8 right 16 fire 32 fire2> */
 static void cmd_joy(int argc, char **argv) {
     if (argc < 3) return;
@@ -331,6 +344,7 @@ static const console_cmd_t cmds[] = {
     { "type",   cmd_type,   "type <text>: type into the Amiga (\\n = Return)" },
     { "key",    cmd_key,    "key <hex> [up|down|tap]: Amiga raw keycode" },
     { "mouse",  cmd_mouse,  "mouse <dx> <dy> [buttons]" },
+    { "mem",    cmd_mem,    "mem <chip KB> <slow KB>: RAM (512/1024/2048, 0/512/1024), cold-start" },
     { "joy",    cmd_joy,    "joy <port> <bits> (1U 2D 4L 8R 16F 32F2)" },
     { "reset",  cmd_reset,  "Ctrl-Amiga-Amiga" },
     { "vol",    cmd_vol,    "vol [0..256]: audio output volume" },

@@ -14,6 +14,7 @@ typedef struct {
     char kick[128], ext[128], df0[128], df1[128];
     bool drive1;                /* DF1 connected (also when df1 is set) */
     uint8_t joykeys;            /* usb_amiga.h JOYKEYS_* */
+    uint16_t chip_kb, slow_kb;  /* 512/1024/2048, 0/512/1024 */
 } media_config_t;
 extern media_config_t media_config;
 

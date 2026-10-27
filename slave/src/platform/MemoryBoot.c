@@ -52,15 +52,34 @@ void memory_set_ext_rom(const uint8_t *data) {
 static uint8_t sram_chip[CHIP_SRAM_BANKS][0x10000] __attribute__((aligned(4)));
 static uint8_t sram_owner[CHIP_SRAM_BANKS];
 #endif
+uint32_t chip_ram_size = 0x80000u;
+static uint32_t slow_bytes = 0x80000u;
+
+void memory_configure(uint32_t chip_bytes, uint32_t slow) {
+    if (chip_bytes == 0x80000u || chip_bytes == 0x100000u || chip_bytes == 0x200000u)
+        chip_ram_size = chip_bytes;
+    slow_bytes = slow <= 0x100000u ? slow : 0x100000u;
+}
+
+// Banks past the chip RAM size are the same memory again (Agnus does not
+// decode the higher address lines).
+#define CHIP_REAL_BANKS (chip_ram_size >> CHIP_BANK_SHIFT)
+static void bank_alias(uint32_t bank, uint8_t *mem) {
+    for (uint32_t b = bank; b < CHIP_BANKS; b += CHIP_REAL_BANKS) {
+        chip_bank[b] = mem;
+        chip_fetch_page[b] = mem;
+    }
+}
+
 static void memory_init_banks(void) {
     for (uint32_t b = 0; b < CHIP_BANKS; ++b)
-        chip_bank[b] = chip_ram + (b << CHIP_BANK_SHIFT);
+        chip_bank[b] = chip_ram + ((b % CHIP_REAL_BANKS) << CHIP_BANK_SHIFT);
 #ifndef CHIP_SRAM_FIRST
 #define CHIP_SRAM_FIRST 0u
 #endif
 #if CHIP_SRAM_BANKS
     for (uint32_t b = 0; b < CHIP_SRAM_BANKS; ++b) {
-        chip_bank[CHIP_SRAM_FIRST + b] = sram_chip[b];
+        bank_alias(CHIP_SRAM_FIRST + b, sram_chip[b]);
         sram_owner[b] = (uint8_t)(CHIP_SRAM_FIRST + b);
     }
 #endif
@@ -77,11 +96,9 @@ static void bank_swap(uint32_t slot, uint32_t bank) {
     uint8_t *bank_home = chip_ram + (bank << CHIP_BANK_SHIFT);
     memcpy(victim_home, sram_chip[slot], 0x10000u);
     memcpy(sram_chip[slot], bank_home, 0x10000u);
-    chip_bank[victim] = victim_home;
-    chip_bank[bank] = sram_chip[slot];
+    bank_alias(victim, victim_home);
+    bank_alias(bank, sram_chip[slot]);
     sram_owner[slot] = (uint8_t)bank;
-    chip_fetch_page[victim] = victim_home;
-    chip_fetch_page[bank] = sram_chip[slot];
 }
 #endif
 
@@ -96,12 +113,12 @@ void chip_bank_sample(const uint32_t *addrs, const uint32_t *weights, int n) {
 #if CHIP_SRAM_BANKS
     static uint32_t frames;
     for (int i = 0; i < n; ++i)
-        bank_heat[(addrs[i] & CHIPTOP) >> CHIP_BANK_SHIFT] += weights[i];
+        bank_heat[((addrs[i] & CHIPTOP) >> CHIP_BANK_SHIFT) % CHIP_REAL_BANKS] += weights[i];
     if (++frames < BANK_PERIOD)
         return;
     frames = 0;
     uint32_t hot = 0, hot_heat = 0, cool_slot = 0, cool_heat = ~0u;
-    for (uint32_t b = 0; b < CHIP_BANKS; ++b) {
+    for (uint32_t b = 0; b < CHIP_REAL_BANKS; ++b) {
         bool in_sram = false;
         for (uint32_t s = 0; s < CHIP_SRAM_BANKS; ++s) {
             if (sram_owner[s] == b) {
@@ -134,6 +151,8 @@ static void memory_map_pages(void) {
         const uint8_t *mem = NULL;
         if (a <= CHIPTOP) {
             mem = chip_bank[a >> CHIP_BANK_SHIFT];
+        } else if (a - 0xC00000u < slow_ram_size) {
+            mem = slow_ram + (a - 0xC00000u);
         } else if (a - 0x200000u < fast_ram_size) {
             mem = chip_ram + a;     // Fast RAM follows chip RAM in PSRAM
         } else if (a >= 0xE00000u && a < 0xE80000u && ext_rom_base) {
@@ -149,7 +168,11 @@ static void memory_map_pages(void) {
 
 void memory_init(void) {
     chip_ram  = (uint8_t *)(BOARD_CHIPRAM_BASE + PSRAM_CHIPRAM_OFFSET);
+    slow_ram  = chip_ram + BOARD_MAP_SLOW_RAM_OFFSET;
+    slow_ram_size = slow_bytes;
     memory_init_banks();
+    printf("Memory: %lu KB chip, %lu KB slow\n", (unsigned long)(chip_ram_size >> 10),
+           (unsigned long)(slow_ram_size >> 10));
 
     // ROM lives in flash; the user must place the Kickstart binary at
     // flash offset 0x200000 (i.e. absolute address ROM_FLASH_BASE).
@@ -200,8 +223,10 @@ int memory_set_rom(const uint8_t *data, uint32_t size) {
 
 void memory_clear_chipram(void) {
     // Leave longword at 0x000000 (Guru indicator) intact; clear from 4 up
-    for (uint32_t b = 0; b < CHIP_BANKS; ++b)
+    for (uint32_t b = 0; b < CHIP_REAL_BANKS; ++b)
         memset(chip_bank[b] + (b ? 0 : 4), 0, 0x10000u - (b ? 0 : 4));
+    if (slow_ram_size)
+        memset(slow_ram, 0, slow_ram_size);
 }
 
 // Autoconfig placed a board at base (Expansion.c), or the reset line

@@ -41,6 +41,13 @@ uint32_t fast_ram_size;
 #else
 #define IN_FAST_RAM(a) 0
 #endif
+// frank-amiga: slow ("trapdoor") RAM at 0xC00000 (MemoryBoot.c sizes it):
+// PSRAM after the Fast RAM window. 0: none (the custom register mirror).
+uint8_t *slow_ram;
+uint32_t slow_ram_size;
+#define IN_SLOW_RAM(a) ((a) - 0xC00000u < slow_ram_size)
+#define SLOW(a) (&slow_ram[(a) - 0xC00000u])
+
 #if OMEGA_RTG
 uint32_t vram_from = 0xFFFFFFFFu;
 #define IN_VRAM(a) __builtin_expect((a) >= vram_from, 0)
@@ -130,7 +137,7 @@ static inline const uint8_t *fetch_ptr(uint32_t address) {
 }
 
 // ── 0xC00000–0xD7FFFF: custom register mirror ───────────────────────────
-// There is no slow (trapdoor/Ranger) RAM: 2 MB chip RAM is enough. As on an
+// Past the slow RAM (frank-amiga: IN_SLOW_RAM() is decoded first), as on an
 // A500 without it, the custom chips answer in this range with their
 // registers repeated every 512 bytes; Kickstart's memory sizing tells the
 // mirror from RAM by writing INTENA through it and reading INTENAR.
@@ -148,6 +155,7 @@ unsigned int chipReadByte(unsigned int address) {
     // Chip RAM is by far the most common target; test it first.
     if (address <= CHIPTOP) return *chip_ptr(address);
     if (IN_FAST_RAM(address)) return chip_ram[address];
+    if (IN_SLOW_RAM(address)) return *SLOW(address);
     // ROM
     if (address >= 0xF80000u) {
         if (!rom_base) return 0;
@@ -180,6 +188,7 @@ unsigned int chipReadByte(unsigned int address) {
 unsigned int chipReadWord(unsigned int address) {
     if (address <= CHIPTOP) return chip_read_word(address);
     if (IN_FAST_RAM(address)) return ram_read_word(&chip_ram[address]);
+    if (IN_SLOW_RAM(address)) return ram_read_word(SLOW(address));
     // ROM
     if (address > 0xF7FFFFu) {
         if (!rom_base) return 0;
@@ -218,6 +227,7 @@ unsigned int chipReadWord(unsigned int address) {
 unsigned int chipReadLong(unsigned int address) {
     if (address <= CHIPTOP) return chip_read_long(address);
     if (IN_FAST_RAM(address)) return ram_read_long(&chip_ram[address]);
+    if (IN_SLOW_RAM(address)) return ram_read_long(SLOW(address));
     // ROM (and the KickSmash ROM switcher's messages: omega/KickSmash.c)
     if (address > 0xF7FFFFu) {
         if (__builtin_expect(kickSmashWatches(address), 0)) {
@@ -258,6 +268,7 @@ unsigned int chipReadLong(unsigned int address) {
 // ── chipWriteByte ─────────────────────────────────────────────────────────
 void chipWriteByte(unsigned int address, unsigned int value) {
     if (address <= CHIPTOP) { *chip_ptr(address) = (uint8_t)value; return; }
+    if (IN_SLOW_RAM(address)) { *SLOW(address) = (uint8_t)value; return; }
     if (IN_FAST_RAM(address)) {
         if (IN_VRAM(address))
             memory_vram_write(address, value, 1);
@@ -304,6 +315,7 @@ void chipWriteWord(unsigned int address, unsigned int value) {
         chip_write_word(address, (uint16_t)value);
         return;
     }
+    if (IN_SLOW_RAM(address)) { ram_write_word(SLOW(address), (uint16_t)value); return; }
     if (IN_FAST_RAM(address)) {
         if (IN_VRAM(address))
             memory_vram_write(address, value, 2);
@@ -351,6 +363,7 @@ void chipWriteLong(unsigned int address, unsigned int value) {
         chip_write_long(address, value);
         return;
     }
+    if (IN_SLOW_RAM(address)) { ram_write_long(SLOW(address), value); return; }
     if (IN_FAST_RAM(address)) {
         if (IN_VRAM(address))
             memory_vram_write(address, value, 4);

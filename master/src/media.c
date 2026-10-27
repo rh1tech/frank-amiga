@@ -9,6 +9,8 @@
  *   df0=/amiga/adf/workbench.adf    optional disk in DF0
  *   df1=/amiga/adf/disk2.adf        optional disk in DF1 (connects DF1)
  *   drives=2                        DF1 connected even with no disk
+ *   chip=512                        chip RAM in KB: 512, 1024 or 2048
+ *   slow=512                        slow RAM at 0xC00000 in KB: 0, 512, 1024
  *   joykeys=arrows                  keyboard joystick in port 2: off, arrows
  *                                   (Right Ctrl/Alt fire), numpad (0 . fire)
  * Uploads go over the link (link_proto.h LINK_OP_UPLOAD_*) with the stream
@@ -114,6 +116,8 @@ static void prefix_path(char *dst, size_t cap, const char *v) {
 
 bool media_load_config(void) {
     memset(&media_config, 0, sizeof media_config);
+    media_config.chip_kb = 512;
+    media_config.slow_kb = 512;
     if (!media_mount()) return false;
     FIL f;
     if (f_open(&f, INI_PATH, FA_READ) != FR_OK) {
@@ -132,12 +136,15 @@ bool media_load_config(void) {
         else if (!strcmp(k, "df0")) prefix_path(media_config.df0, sizeof media_config.df0, v);
         else if (!strcmp(k, "df1")) prefix_path(media_config.df1, sizeof media_config.df1, v);
         else if (!strcmp(k, "drives")) media_config.drive1 = atoi(v) >= 2;
+        else if (!strcmp(k, "chip")) media_config.chip_kb = (uint16_t)atoi(v);
+        else if (!strcmp(k, "slow")) media_config.slow_kb = (uint16_t)atoi(v);
         else if (!strcmp(k, "joykeys")) media_config.joykeys = usb_amiga_joykeys_parse(v);
     }
     f_close(&f);
     if (media_config.df1[0]) media_config.drive1 = true;
-    printf("media: kick=%s ext=%s df0=%s df1=%s%s\n", media_config.kick, media_config.ext,
-           media_config.df0, media_config.df1, media_config.drive1 ? "" : " (no DF1)");
+    printf("media: kick=%s ext=%s df0=%s df1=%s%s, %u KB chip + %u KB slow\n", media_config.kick,
+           media_config.ext, media_config.df0, media_config.df1,
+           media_config.drive1 ? "" : " (no DF1)", media_config.chip_kb, media_config.slow_kb);
     return media_config.kick[0] != 0;
 }
 
@@ -147,6 +154,9 @@ bool media_boot(void) {
     bool ok = media_upload(LINK_UP_ROM, media_config.kick);
     if (ok && media_config.ext[0]) ok = media_upload(LINK_UP_EXT, media_config.ext);
     uint32_t flags = media_config.drive1 ? LINK_BOOT_DF1 : 0;
+    const uint32_t chip = media_config.chip_kb >= 2048 ? 2u : media_config.chip_kb >= 1024 ? 1u : 0u;
+    const uint32_t slow = media_config.slow_kb == 0 ? 1u : media_config.slow_kb >= 1024 ? 2u : 0u;
+    flags |= chip << LINK_BOOT_CHIP_SHIFT | slow << LINK_BOOT_SLOW_SHIFT;
     if (ok && media_config.df0[0] && media_upload(LINK_UP_DF0, media_config.df0))
         flags |= LINK_BOOT_DF0_DISK;
     if (ok && media_config.df1[0] && media_upload(LINK_UP_DF1, media_config.df1))

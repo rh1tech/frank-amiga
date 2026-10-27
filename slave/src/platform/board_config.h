@@ -36,6 +36,7 @@
 //  0x7FF100..0x7FF13F  Upload record: what the master uploaded (link_pump.c)
 #define BOARD_MAP_CHIPRAM_OFFSET   0x000000u
 #define BOARD_MAP_FAST_RAM_OFFSET  0x200000u
+#define BOARD_MAP_SLOW_RAM_OFFSET  0x300000u   // from chip RAM: 1 MB slow RAM max
 #define BOARD_MAP_RTG_VRAM_OFFSET  0x400000u
 #define BOARD_MAP_ROM_OFFSET       0x500000u
 #define BOARD_MAP_DF0_ADF_OFFSET   0x400000u

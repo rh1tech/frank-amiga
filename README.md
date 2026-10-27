@@ -33,6 +33,8 @@ card's test set on the board and reports fps, last PC and hang/reset flags
                             df1=/amiga/adf/game-2.adf      (optional; connects DF1)
                             drives=2                       (DF1 connected, empty)
                             joykeys=arrows                 (off | arrows | numpad)
+                            chip=512                       chip RAM KB: 512 | 1024 | 2048
+                            slow=512                       slow RAM KB at $C00000: 0 | 512 | 1024
 /amiga/kick/                Kickstart images (your own licensed copies, or AROS)
 /amiga/adf/                 disk images
 ```
@@ -52,12 +54,14 @@ into the ADF file on the card about a second later.
 - Console (UART0, 115200): `df0`/`df1 <path|none>` change disks, `kick`/`ext
   <path>` change ROMs and cold-start, `boot` rereads the ini, `reset` is
   Ctrl-Amiga-Amiga, `type`/`key`/`mouse`/`joy` drive input, `osd`/`osdkey`,
-  `vol`, `stats`.
+  `vol`, `mem <chip KB> <slow KB>` (RAM, cold-start), `stats`.
 
 ## Status
 
 - Both halves at 504 MHz; HDMI 640x480@50 locked to the emulated PAL frame,
   Paula on the I2S DAC, microSD, USB HID.
+- Machine: an A500 by default (512 KB chip + 512 KB slow RAM, smaller chip
+  sizes mirroring as Agnus does), up to 2 MB chip / 1 MB slow.
 - Chipset: OCS with dual playfield, interlace (woven), collisions, audio
   attach, overscan-aware vertical window, two floppy drives with writes.
 - Blits are computed at once but end (BBUSY, interrupt) after their real
