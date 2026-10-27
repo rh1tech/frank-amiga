@@ -951,8 +951,15 @@ static void __attribute__((noinline)) COLOUR_FUNC(setColour)(unsigned n,
                    31 * sizeof(uint16_t), "colour registers not contiguous");
     const uint16_t old = (&chipset.color00)[n];
     (&chipset.color00)[n] = value; //old register
-    internal.palette[n] = OCS2ARGB(value); internal.palette332[n] = omegaRGB332(internal.palette[n]); internal.paletteGeneration++;
-    internal.palette[n + 32] = EHB2ARGB(value); internal.palette332[n + 32] = omegaRGB332(internal.palette[n + 32]); internal.paletteGeneration++;
+    internal.palette[n] = OCS2ARGB(value);
+    internal.palette[n + 32] = EHB2ARGB(value);
+#ifndef PICO_BUILD
+    // frank-amiga: the 8-bit palette only feeds Omega's own renderer; the
+    // board's slave streams colours to the master instead.
+    internal.palette332[n] = omegaRGB332(internal.palette[n]);
+    internal.palette332[n + 32] = omegaRGB332(internal.palette[n + 32]);
+#endif
+    internal.paletteGeneration += 2;
     // HDMI: the change takes effect at its beam position, mid-line too.
     if (hostDirectActive)
         hostDirectColour((int)n, old, value);
