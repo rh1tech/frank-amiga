@@ -153,7 +153,11 @@ void bringup_cmd_sd(int argc, char **argv) {
     const char *path = argc > 1 ? argv[1] : "0:/";
     DIR d;
     FILINFO fi;
-    if (f_opendir(&d, path) != FR_OK) { printf("sd: cannot open %s\n", path); return; }
+    if (f_opendir(&d, path) != FR_OK &&
+        (!media_remount() || f_opendir(&d, path) != FR_OK)) {
+        printf("sd: cannot open %s\n", path);
+        return;
+    }
     int n = 0;
     while (f_readdir(&d, &fi) == FR_OK && fi.fname[0]) {
         printf("  %s%-40s %10lu\n", (fi.fattrib & AM_DIR) ? "/" : " ", fi.fname,

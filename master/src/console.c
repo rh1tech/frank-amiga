@@ -13,14 +13,28 @@
 
 #include "pico/stdlib.h"
 
-#define LINE_MAX 160
+#define LINE_MAX 256
 #define ARGS_MAX 12
 
 static void run_line(const console_cmd_t *cmds, char *line) {
     char *argv[ARGS_MAX];
     int argc = 0;
-    for (char *t = strtok(line, " \t"); t && argc < ARGS_MAX; t = strtok(NULL, " \t"))
-        argv[argc++] = t;
+    /* Words, or "quoted strings" (file names with spaces). */
+    for (char *p = line; *p && argc < ARGS_MAX;) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+        char *end;
+        if (*p == '"') {
+            argv[argc++] = ++p;
+            end = strchr(p, '"');
+        } else {
+            argv[argc++] = p;
+            end = p + strcspn(p, " \t");
+        }
+        if (!end || !*end) break;
+        *end = 0;
+        p = end + 1;
+    }
     if (!argc)
         return;
     if (!strcmp(argv[0], "help")) {

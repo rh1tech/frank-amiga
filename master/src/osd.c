@@ -132,7 +132,8 @@ static void load_files(const char *dir) {
     if (!media_mount()) return;
     DIR d;
     FILINFO fi;
-    if (f_opendir(&d, dir) != FR_OK) return;
+    if (f_opendir(&d, dir) != FR_OK &&
+        (!media_remount() || f_opendir(&d, dir) != FR_OK)) return;
     while (nfiles < MAX_FILES && f_readdir(&d, &fi) == FR_OK && fi.fname[0]) {
         if (fi.fattrib & (AM_DIR | AM_HID) || fi.fname[0] == '.') continue;
         snprintf(files[nfiles++], 64, "%s", fi.fname);

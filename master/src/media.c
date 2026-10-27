@@ -40,6 +40,14 @@ media_config_t media_config;
 
 bool media_mount(void) {
     if (mounted) return true;
+    return media_remount();
+}
+
+/* A fresh mount (the card may have been swapped: FatFs keeps the old one's
+ * FAT and directories). Callers retry once with it when an open fails. */
+bool media_remount(void) {
+    mounted = false;
+    f_unmount("0:");
     FRESULT r = f_mount(&fs, "0:", 1);
     if (r != FR_OK) { printf("media: no microSD (%d)\n", r); return false; }
     mounted = true;
@@ -68,7 +76,8 @@ bool media_upload(uint32_t target, const char *path) {
     const uint32_t saved_timeout = sess->handshake_timeout_us;
     sess->handshake_timeout_us = 200000;
     FIL f;
-    if (f_open(&f, path, FA_READ) != FR_OK) {
+    if (f_open(&f, path, FA_READ) != FR_OK &&
+        (!media_remount() || f_open(&f, path, FA_READ) != FR_OK)) {
         printf("media: cannot open %s\n", path);
         return false;
     }
@@ -120,7 +129,8 @@ bool media_load_config(void) {
     media_config.slow_kb = 512;
     if (!media_mount()) return false;
     FIL f;
-    if (f_open(&f, INI_PATH, FA_READ) != FR_OK) {
+    if (f_open(&f, INI_PATH, FA_READ) != FR_OK &&
+        (!media_remount() || f_open(&f, INI_PATH, FA_READ) != FR_OK)) {
         printf("media: no %s\n", INI_PATH);
         return false;
     }
@@ -197,7 +207,9 @@ static bool save_drive(int drive) {
     uint8_t map[LINK_DISK_TRACKS / 8];
     memcpy(map, (const uint8_t *)link_rx_hdr(sess) + sizeof(link_hdr_t), sizeof map);
     FIL f;
-    const bool open = path[0] && media_mount() && f_open(&f, path, FA_WRITE) == FR_OK;
+    const bool open = path[0] && media_mount() &&
+        (f_open(&f, path, FA_WRITE) == FR_OK ||
+         (media_remount() && f_open(&f, path, FA_WRITE) == FR_OK));
     uint32_t saved = 0;
     for (uint32_t t = 0; t < LINK_DISK_TRACKS; t++) {
         if (!(map[t >> 3] & (1u << (t & 7)))) continue;

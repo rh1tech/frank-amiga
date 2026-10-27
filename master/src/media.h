@@ -20,6 +20,8 @@ extern media_config_t media_config;
 
 void media_init(link_session_t *sess);
 bool media_mount(void);
+/* Mounts the card afresh (after a swap). */
+bool media_remount(void);
 bool media_load_config(void);
 /* Upload the configured ROMs and disk, then reboot the slave from them. */
 bool media_boot(void);

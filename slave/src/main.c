@@ -116,7 +116,7 @@ void __attribute__((naked)) isr_hardfault(void) {
 
 /* ── Input from the master, applied once per frame (upstream
  * src/usb_input.c usb_input_frame()) ── */
-#define KEYQ 32u
+#define KEYQ 512u   /* typed text (console) arrives faster than a key a frame */
 static uint8_t key_q[KEYQ];
 static uint32_t key_head, key_tail;
 static int mouse_dx, mouse_dy;
