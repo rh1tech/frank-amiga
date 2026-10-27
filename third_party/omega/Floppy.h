@@ -84,6 +84,7 @@ void floppyLineTick(void);
 int floppyDataReady(void);
 int floppyWordDue(void);
 int floppyHasMedia(void);
+int floppyPortEmpty(void);
 uint16_t floppyByteReg(void);
 
 void floppyState();     //Get the drive state for the CIA

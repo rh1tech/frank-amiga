@@ -1550,8 +1550,20 @@ void diskCycle(void){
                 return;     // frank-amiga: flux track still on its way
             // frank-amiga: a sync word that cannot come (no drive or no disk
             // at the selected port) is not searched for in endless zeros.
-            if (!floppySync && (chipset.adkconr & 0x400) && !floppyHasMedia())
+            if (!floppySync && (chipset.adkconr & 0x400) && !floppyHasMedia()) {
+                // No drive at all at that port: the read ends at once with
+                // nothing read (fast loading: a loader polling every port for
+                // a disk would otherwise wait out its timeout on each).
+                if (floppyPortEmpty()) {
+                    for (; chipset.dsklen & 0x3FFF; chipset.dsklen--) {
+                        *chip_ptr(chipset.dskpt & CHIPTOP) = 0;
+                        *chip_ptr((chipset.dskpt + 1) & CHIPTOP) = 0;
+                        chipset.dskpt += 2;
+                    }
+                    putChipReg16[INTREQ](0x8002);   //Disk block done INT
+                }
                 return;
+            }
 
             // frank-amiga: without ADKCON WORDSYNC the transfer starts at
             // once instead of at the next sync word.

@@ -510,6 +510,7 @@ void floppyTrackLoaded(int drive, int track, uint32_t len, const uint16_t *cells
 // a broken track and retry forever); the disk just reaches the data later.
 // No drive at the port, or no disk in it: no bits come off it.
 static int drive_connected[4];
+int floppyPortEmpty(void) { return driveSelected >= 4 || !drive_connected[driveSelected]; }
 int floppyHasMedia(void) {
     const int d = driveSelected;
     return d < 4 && drive_connected[d] && df[d].hasDisk;
@@ -635,6 +636,7 @@ void floppyWriteDone(void) {
 static int drive_connected[4] = { 1, 0, 0, 0 };
 int floppyDataReady(void) { return 1; }
 int floppyHasMedia(void) { return driveSelected == 0 && df[0].hasDisk; }
+int floppyPortEmpty(void) { return driveSelected != 0; }
 void floppyWriteByte(uint8_t b) { (void)b; }
 void floppyWriteDone(void) {}
 void floppyWriteAbort(void) {}
