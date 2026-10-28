@@ -486,34 +486,21 @@ static void hostDirectRowEndVideo(int row, int drawn) {
 volatile uint32_t host_dpf_rows;
 static int dpf_row = -1;
 static uint32_t dpf_state = ~0u;
-// The playfields' scroll difference (PF2H - PF1H, lores pixels) is applied
-// here when PF2 is the delayed one: its plane words are shifted into line
-// with PF1's, carrying bits over from the previous block of the run, so the
-// block reaches core 1 / the master aligned (MSG_DPF delta 0), where it
-// takes the direct path. A block that does not follow the previous one
-// starts with empty carry bits. With PF1 delayed (PF1H > PF2H) the delta
-// goes to the master, which places PF2 at its own offset (dpfPlace()):
-// shifting PF1 here broke Desert Dream's intro globe (PF1H 6-15, PF2H 0)
-// into 16-pixel strips.
-static int dpf_delta;             // PF2H - PF1H of the row's blocks
-static int dpf_next_x = -1000;    // where a following block would start
-static uint64_t dpf_carry[3];     // the shifted planes' recent words, newest low
+// The playfields' scroll difference (PF2H - PF1H, lores pixels) goes to
+// the master with the row's state; it places PF2 at its own offset
+// (dpfPlace()). Shifting the delayed playfield's plane words here instead
+// broke Desert Dream's intro globe and Psychoball's balls (PF1 delayed) and
+// Psychoball's scroller (PF2 delayed) into 16-pixel strips.
 
 // ev: a block record's header (EV_DPF..., see the event queue below).
 static inline uint32_t dpfBlockFlag(int row, uint32_t ev) {
     if (!(ev & EV_DPF))
         return 0;
     const int delta = (int)((ev >> EV_DPF_DELTA_SHIFT) & 31u) - 16;
-    // PF2 delayed: sent with delta 0, the shift is done here; PF1 delayed:
-    // the master offsets PF2 by the (negative) delta.
-    const uint32_t st = ((ev & EV_PF2PRI) ? 1u << 5 : 0u) |
-                        (delta < 0 ? (uint32_t)delta & 31u : 0u);
-    if (row != dpf_row || st != dpf_state || delta != dpf_delta) {
-        if (row != dpf_row || delta != dpf_delta)
-            dpf_next_x = -1000;
+    const uint32_t st = ((ev & EV_PF2PRI) ? 1u << 5 : 0u) | ((uint32_t)delta & 31u);
+    if (row != dpf_row || st != dpf_state) {
         dpf_row = row;
         dpf_state = st;
-        dpf_delta = delta;
         colourQueueFlush();
         runFlush();
         host_dpf_rows++;
@@ -524,32 +511,10 @@ static inline uint32_t dpfBlockFlag(int row, uint32_t ev) {
     return MSG_RUN_DPF;
 }
 
-// Shifts a plane right by `bits` (1..15 LORES, 2..30 HIRES), the earlier
-// words' bits coming in from the left.
-static inline uint16_t dpfShift(uint16_t w, int i, int bits) {
-    const uint64_t h = dpf_carry[i] << 16 | w;
-    dpf_carry[i] = h;
-    return (uint16_t)(h >> bits);
-}
-
-static inline void dpfAlign(int x, int step, int bits_per_lores,
-                            uint16_t *a, uint16_t *b, uint16_t *c) {
-    if (x != dpf_next_x)
-        dpf_carry[0] = dpf_carry[1] = dpf_carry[2] = 0;
-    dpf_next_x = x + step;
-    const int bits = (dpf_delta < 0 ? -dpf_delta : dpf_delta) * bits_per_lores;
-    *a = dpfShift(*a, 0, bits);
-    *b = dpfShift(*b, 1, bits);
-    if (c)
-        *c = dpfShift(*c, 2, bits);
-}
-
 static void c1HiresBlock(int row, int x, uint16_t p1, uint16_t p2,
                          uint16_t p3, uint16_t p4, uint32_t ev) {
     hostDirectSyncPalette();
     const uint32_t dpf = dpfBlockFlag(row, ev);
-    if (dpf && dpf_delta > 0)
-        dpfAlign(x, 16, 2, &p2, &p4, NULL);   // PF2 later
     uint32_t *planes = runAppend(MSG_HEADER(MSG_HIRES, row, 0, 0) | dpf, x, 16, 2);
     planes[0] = p1 | (uint32_t)p2 << 16;
     planes[1] = p3 | (uint32_t)p4 << 16;
@@ -561,8 +526,6 @@ static void c1LoresBlock(int row, int x, uint16_t p1, uint16_t p2, uint16_t p3,
                          uint32_t ev) {
     hostDirectSyncPalette();
     const uint32_t dpf = ham ? 0 : dpfBlockFlag(row, ev);
-    if (dpf && dpf_delta > 0)
-        dpfAlign(x, 32, 1, &p2, &p4, &p6);    // PF2 later
     uint32_t *planes =
         runAppend(MSG_HEADER(MSG_LORES, row, 0, ham ? 1 : 0) | dpf, x, 32, 3);
     planes[0] = p1 | (uint32_t)p2 << 16;
@@ -694,7 +657,6 @@ static void c1Restored(void) {
     core1_palette_valid = false;
     dpf_row = -1;
     dpf_state = ~0u;
-    dpf_next_x = -1000;
 }
 
 void hostAmigaKey(uint8_t code, int released) {

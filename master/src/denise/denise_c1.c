@@ -272,7 +272,7 @@ static void C1_FUNC(c1Record)(int y, int x0, int x1) {
 // (planes 1/3/5 -> PF1, colours 0-7; planes 2/4/6 -> PF2, colours 8-15),
 // each kept in a row buffer at its own scroll offset; they are combined by
 // priority when the row is flushed (before anything else touches it).
-static uint8_t dpf_buf[DVI_DIRECT_IMAGE_WIDTH];  // PF1 | PF2 << 3 per column
+static uint8_t dpf_buf[DVI_DIRECT_IMAGE_WIDTH] __attribute__((aligned(4)));  // PF1 | PF2 << 3 per column
 static int dpf_y = -1, dpf_min, dpf_max;
 static int c1_dpf_delta;          // PF2 offset from PF1, image columns
 static bool c1_pf2pri;
@@ -306,9 +306,26 @@ static void __attribute__((noinline)) C1_FUNC(dpfFlush)(void) {
         return;
     uint8_t *line = c1_image + y * DVI_DIRECT_IMAGE_WIDTH;
     const uint8_t *comp = dpf_comp[c1_pf2pri];
-    for (int x = dpf_min; x < dpf_max; ++x)
+    // frank-amiga: four columns a step (the buffer is word aligned; the
+    // row may start or end mid-word).
+    int x = dpf_min;
+    for (; x < dpf_max && (x & 3); ++x) {
         line[x] = comp[dpf_buf[x]];
-    memset(dpf_buf + dpf_min, 0, (size_t)(dpf_max - dpf_min));
+        dpf_buf[x] = 0;
+    }
+    for (; x + 4 <= dpf_max; x += 4) {
+        uint32_t *b = (uint32_t *)(dpf_buf + x);
+        const uint32_t v = *b;
+        *b = 0;
+        line[x] = comp[v & 0xffu];
+        line[x + 1] = comp[(v >> 8) & 0xffu];
+        line[x + 2] = comp[(v >> 16) & 0xffu];
+        line[x + 3] = comp[v >> 24];
+    }
+    for (; x < dpf_max; ++x) {
+        line[x] = comp[dpf_buf[x]];
+        dpf_buf[x] = 0;
+    }
     const bool ham = c1_ham;
     c1_ham = false;
     c1Record(y, dpf_min, dpf_max);
@@ -358,10 +375,22 @@ static void C1_FUNC(dpfPlace)(int y, int image_x, const uint8_t *pixels,
     }
     int i1;
     int i0 = dpfClip(image_x, width, &i1);
+    // frank-amiga: LORES blocks double every pixel and the playfields'
+    // offset is even, so whole column pairs are placed at once (aligned
+    // halfwords); HIRES blocks go column by column.
+    const bool pairs = width == 32 && !(image_x & 1) && !(c1_dpf_delta & 1);
     if (i1 > i0) {
         uint8_t *buf = dpf_buf + image_x;
-        for (int i = i0; i < i1; ++i)
-            buf[i] = (uint8_t)((buf[i] & 0x38u) | dpf_lut1[pixels[i]]);
+        if (pairs && !((i0 | i1) & 1)) {
+            uint16_t *b = (uint16_t *)buf;
+            for (int i = i0; i < i1; i += 2) {
+                const uint16_t v = dpf_lut1[pixels[i]];
+                b[i >> 1] = (uint16_t)((b[i >> 1] & 0x3838u) | v | v << 8);
+            }
+        } else {
+            for (int i = i0; i < i1; ++i)
+                buf[i] = (uint8_t)((buf[i] & 0x38u) | dpf_lut1[pixels[i]]);
+        }
         if (image_x + i0 < dpf_min) dpf_min = image_x + i0;
         if (image_x + i1 > dpf_max) dpf_max = image_x + i1;
     }
@@ -369,8 +398,16 @@ static void C1_FUNC(dpfPlace)(int y, int image_x, const uint8_t *pixels,
     i0 = dpfClip(x2, width, &i1);
     if (i1 > i0) {
         uint8_t *buf = dpf_buf + x2;
-        for (int i = i0; i < i1; ++i)
-            buf[i] = (uint8_t)((buf[i] & 0x07u) | dpf_lut2[pixels[i]]);
+        if (pairs && !((i0 | i1) & 1)) {
+            uint16_t *b = (uint16_t *)buf;
+            for (int i = i0; i < i1; i += 2) {
+                const uint16_t v = dpf_lut2[pixels[i]];
+                b[i >> 1] = (uint16_t)((b[i >> 1] & 0x0707u) | v | v << 8);
+            }
+        } else {
+            for (int i = i0; i < i1; ++i)
+                buf[i] = (uint8_t)((buf[i] & 0x07u) | dpf_lut2[pixels[i]]);
+        }
         if (x2 + i0 < dpf_min) dpf_min = x2 + i0;
         if (x2 + i1 > dpf_max) dpf_max = x2 + i1;
     }
