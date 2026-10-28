@@ -539,7 +539,13 @@ int main(void) {
     }
     upload_set_running(true);
 #ifdef FRANK_PARALLEL
-    par_cpu_slot = par_dma_slot = 0;
+    {   /* Both clocks start 16M slots (~5 s) before they wrap, so code
+         * that does not take the wrap shows it at once, not after 20
+         * minutes. */
+        extern uint32_t par_cpu_base, par_cpu_odd;
+        par_cpu_base = par_cpu_slot = par_dma_slot = 0xFF000000u;
+        par_cpu_odd = 0;
+    }
     __dmb();
     par_running = true;         /* core 1 starts the CPU */
 #endif

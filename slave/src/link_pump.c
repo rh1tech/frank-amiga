@@ -239,7 +239,11 @@ void __not_in_flash_func(pump_service)(void) { pump_once(); }
 volatile uint32_t par_cpu_slot, par_dma_slot;
 volatile bool par_running;
 volatile int par_stop_req, par_cpu_parked;
-uint32_t par_cpu_cycles;                 /* CPU cycles run (this core; m68kcpu.c reads it) */
+/* The CPU's time: whole slots run, and an odd cycle carried over (this
+ * core; m68kcpu.c reads them). Kept in slots, not cycles: a 32-bit cycle
+ * count halved wraps at 2^31 slots (~10 minutes), half way round the
+ * chipset's slot count, and the CPU then waited for ever. */
+uint32_t par_cpu_base, par_cpu_odd;
 
 static inline bool par_on_cpu_core(void) { return get_core_num() == 1u; }
 
@@ -251,7 +255,7 @@ static void __not_in_flash_func(par_wait_step)(void) {
 void __not_in_flash_func(parSync)(void) {
     if (!par_running || !par_on_cpu_core())
         return;
-    const uint32_t t = (par_cpu_cycles + (uint32_t)m68k_cycles_run()) >> 1;
+    const uint32_t t = par_cpu_base + ((par_cpu_odd + (uint32_t)m68k_cycles_run()) >> 1);
     __dmb();
     if ((int32_t)(t - par_cpu_slot) > 0)
         par_cpu_slot = t;
@@ -318,7 +322,7 @@ int __not_in_flash_func(parSkipSync)(int write, unsigned reg) {
     } else if (reg != 1u || !par_blit_wait) {
         return 0;
     }
-    const uint32_t t = (par_cpu_cycles + (uint32_t)m68k_cycles_run()) >> 1;
+    const uint32_t t = par_cpu_base + ((par_cpu_odd + (uint32_t)m68k_cycles_run()) >> 1);
     if (!write && (int32_t)(par_blit_until - t) <= 1)
         return 0;
     /* The CPU is at t: the chipset may run up to it meanwhile. */
@@ -339,7 +343,7 @@ static bool __not_in_flash_func(par_cpu_step)(void) {
         __dmb();
     }
     const int32_t room =
-        (int32_t)(par_dma_slot + PAR_LEAD_SLOTS - (par_cpu_cycles >> 1));
+        (int32_t)(par_dma_slot + PAR_LEAD_SLOTS - par_cpu_base);
     if (room <= 0)
         return false;
     int budget = room * 2;
@@ -349,13 +353,17 @@ static bool __not_in_flash_func(par_cpu_step)(void) {
 #ifdef FRANK_PROF
     const uint32_t c0 = PROF_CYC;
 #endif
-    par_cpu_cycles += (uint32_t)m68k_execute(budget);
+    {
+        const uint32_t c = par_cpu_odd + (uint32_t)m68k_execute(budget);
+        par_cpu_base += c >> 1;
+        par_cpu_odd = c & 1u;
+    }
 #ifdef FRANK_PROF
     prof_c1_cpu += PROF_CYC - c0;
 #endif
     par_in_cpu = false;
     __dmb();
-    par_cpu_slot = par_cpu_cycles >> 1;
+    par_cpu_slot = par_cpu_base;
     return true;
 }
 
