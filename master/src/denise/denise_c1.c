@@ -14,6 +14,7 @@
 #include "HostRing.h"
 #include "../omega/DisplayLayout.h"
 #include "../omega/Audio.h"
+#include "../osd.h"
 
 #include "pico/stdlib.h"
 #include "hardware/sync.h"
@@ -796,6 +797,7 @@ void C1_FUNC(hostCore1Loop)(void) {
             }
             case MSG_BEGIN:
                 c1Begin(msg[1], msg[2], msg[3]);
+                osd_meter_frame(header >> 23);
                 length = 4;
                 break;
             case MSG_ROW_SAME:

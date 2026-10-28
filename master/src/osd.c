@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "pico/stdlib.h"
+#include "hardware/clocks.h"
 #include "ff.h"
 
 #include "audio/audio.h"
@@ -49,7 +50,75 @@ static volatile bool visible;
 static uint32_t col_fg, col_bg, col_hl_fg, col_hl_bg, col_frame;
 static uint32_t box_x0, box_row0;          /* in output pixels / source rows */
 
+/* ── Performance meter ─────────────────────────────────────────────────
+ * Two lines bottom right: "EMU 15.2ms 131%" is the slave's time per
+ * emulated frame (core 0, pacing waits excluded; the share of the frame
+ * period it needs, inverted: above 100 % there is headroom), "FPS 49.9
+ * 504MHz" the emulated frames per second. */
+#define METER_COLS 16
+#define METER_ROWS 2
+static char meter_text[METER_ROWS][METER_COLS];
+static volatile bool meter_on;
+static uint32_t meter_x0, meter_row0;      /* box corner (output px, source rows) */
+
+void osd_meter_set(bool on) {
+    meter_x0 = video_width() - (METER_COLS * 16u + 8u) - 8u;
+    meter_row0 = video_rows() - (METER_ROWS * 8u + 4u) - 4u;
+    meter_on = on;
+}
+
+bool osd_meter_on(void) { return meter_on; }
+
+void osd_meter_frame(uint32_t emu_tenths) {
+    static uint64_t t0;
+    static uint32_t frames;
+    const uint64_t now = time_us_64();
+    frames++;
+    if (!t0) { t0 = now; frames = 0; return; }
+    const uint64_t dt = now - t0;
+    if (dt < 1000000u) return;
+    /* The frame period the emulator is paced to: the display's refresh. */
+    const uint32_t period = strstr(video_mode_name(), "p60") ? 16667u : 20000u;
+    const uint32_t fps10 = (uint32_t)(((uint64_t)frames * 10000000u + dt / 2u) / dt);
+    char l[2][32];
+    snprintf(l[0], sizeof l[0], "EMU%3lu.%lums%4lu%%", (unsigned long)(emu_tenths / 10u),
+             (unsigned long)(emu_tenths % 10u), (unsigned long)(emu_tenths ? period / emu_tenths : 0u));
+    snprintf(l[1], sizeof l[1], "FPS%3lu.%lu%5luMHz", (unsigned long)(fps10 / 10u),
+             (unsigned long)(fps10 % 10u), (unsigned long)(clock_get_hz(clk_sys) / 1000000u));
+    for (int r = 0; r < METER_ROWS; r++) {
+        memset(meter_text[r], ' ', METER_COLS);
+        const size_t n = strlen(l[r]);
+        memcpy(meter_text[r], l[r], n < METER_COLS ? n : METER_COLS);
+    }
+    t0 = now;
+    frames = 0;
+}
+
+static void __not_in_flash_func(meter_row)(uint32_t row, uint32_t *out) {
+    const uint32_t box_rows = METER_ROWS * 8u + 4u, box_w = METER_COLS * 16u + 8u;
+    if (row < meter_row0 || row >= meter_row0 + box_rows) return;
+    const uint32_t y = row - meter_row0;
+    uint32_t *o = out + meter_x0;
+    if (y < 2u || y >= box_rows - 2u) {
+        for (uint32_t x = 0; x < box_w; x++) o[x] = col_frame;
+        return;
+    }
+    o[0] = o[1] = o[2] = o[3] = col_frame;
+    o[box_w - 1] = o[box_w - 2] = o[box_w - 3] = o[box_w - 4] = col_frame;
+    const uint32_t ty = y - 2u, r = ty >> 3, gy = ty & 7u;
+    uint32_t *p = o + 4;
+    for (uint32_t c = 0; c < METER_COLS; c++) {
+        const uint8_t bits = osd_font[(uint8_t)meter_text[r][c] * 8u + gy];
+        for (uint32_t b = 0; b < 8; b++) {
+            const uint32_t v = (bits >> b) & 1u ? col_fg : col_bg;
+            p[0] = p[1] = v;
+            p += 2;
+        }
+    }
+}
+
 void __not_in_flash_func(osd_overlay_row)(uint32_t row, uint32_t *out, uint32_t width) {
+    if (meter_on) meter_row(row, out);
     if (!visible) return;
     const uint32_t rows = ov_rows, cols = ov_cols, scale = ov_scale;
     const uint32_t box_rows = rows * 8u + 4u;
@@ -295,7 +364,7 @@ void osd_fm_toggle(void) {
     visible = true;
 }
 
-enum { I_DF0, I_DF1, I_KICK, I_RESET, I_SAVE, I_LOAD, I_VOL, I_JOY, I_EXIT, I_COUNT };
+enum { I_DF0, I_DF1, I_KICK, I_RESET, I_SAVE, I_LOAD, I_VOL, I_JOY, I_METER, I_EXIT, I_COUNT };
 
 static void draw(void) {
     char line[COLS + 1];
@@ -315,6 +384,8 @@ static void draw(void) {
         put(2 + I_VOL, line);
         snprintf(line, sizeof line, " Joystick keys: %s", usb_amiga_joykeys_name(media_config.joykeys));
         put(2 + I_JOY, line);
+        snprintf(line, sizeof line, " Performance meter: %s", meter_on ? "on" : "off");
+        put(2 + I_METER, line);
         put(2 + I_EXIT, " Back to the Amiga");
         put(ROWS - 1, " up/down, Enter, Esc");
         highlight = (uint8_t)(2 + sel);
@@ -384,6 +455,9 @@ void osd_key(uint8_t hid, bool down) {
         if (mode == M_MAIN && sel == I_VOL) {
             int v = (int)audio_get_volume() + (hid == 0x4F ? 16 : -16);
             audio_set_volume((uint32_t)(v < 0 ? 0 : v > 256 ? 256 : v));
+        } else if (mode == M_MAIN && sel == I_METER) {
+            osd_meter_set(!meter_on);
+            media_config.meter = meter_on;
         } else if (mode == M_MAIN && sel == I_JOY) {
             const int n = JOYKEYS_COUNT, d = hid == 0x4F ? 1 : n - 1;
             media_config.joykeys = (uint8_t)((media_config.joykeys + d) % n);
@@ -408,6 +482,7 @@ void osd_key(uint8_t hid, bool down) {
         case I_RESET: stream_input(LINK_EV_RESET, 0, 0, 0); visible = false; break;
         case I_SAVE: media_state(false); visible = false; break;
         case I_LOAD: media_state(true); visible = false; break;
+        case I_METER: osd_meter_set(!meter_on); media_config.meter = meter_on; break;
         case I_JOY: media_config.joykeys = (uint8_t)((media_config.joykeys + 1) % JOYKEYS_COUNT); break;
         case I_EXIT: visible = false; break;
         }

@@ -9,7 +9,8 @@
 #include "../omega/Chipset.h"
 
 enum {
-    MSG_BEGIN = 1,   // + 3 words: frame layout, frame number
+    MSG_BEGIN = 1,   // + 3 words: frame layout, frame number; frank-amiga:
+                     //   extra = slave time per frame, 0.1 ms (meter)
     MSG_HIRES,       // + 2 words per block: planes 1..4
     MSG_LORES,       // + 3 words per block: planes 1..6; extra bit 0 = HAM
     MSG_PALETTE,     // + 1 + extra words: mask of the colours that changed,

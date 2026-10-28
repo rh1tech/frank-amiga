@@ -210,8 +210,28 @@ static uint16_t joy_word(uint8_t b) {
     return (uint16_t)(r << 1 | (d ^ r) | l << 9 | (u ^ l) << 8);
 }
 
+/* The meter: core 0's wall time per frame, from the end of one pacing
+ * wait to the start of the next, averaged over 25 frames. */
+volatile uint32_t host_emu_tenths_ms;
+
+static void emu_time_frame(bool after_pace) {
+    static uint64_t t_start, sum_us;
+    static uint32_t n;
+    const uint64_t now = time_us_64();
+    if (after_pace) { t_start = now; return; }
+    if (!t_start) return;
+    sum_us += now - t_start;
+    if (++n == 25u) {
+        host_emu_tenths_ms = (uint32_t)((sum_us + 1250u) / 2500u);   /* 25 frames, 0.1 ms */
+        sum_us = 0;
+        n = 0;
+    }
+}
+
 void host_frame_paced(void) {
+    emu_time_frame(false);
     pace();
+    emu_time_frame(true);
     sample_banks();
     upload_core0_frame();
 #ifdef FRANK_PARALLEL

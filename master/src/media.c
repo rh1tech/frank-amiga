@@ -13,6 +13,7 @@
  *   slow=512                        slow RAM at 0xC00000 in KB: 0, 512, 1024
  *   joykeys=arrows                  keyboard joystick in port 2: off, arrows
  *                                   (Right Ctrl/Alt fire), numpad (0 . fire)
+ *   meter=on                        performance meter (EMU ms, FPS) shown
  * Uploads go over the link (link_proto.h LINK_OP_UPLOAD_*) with the stream
  * paused; BOOT then makes the slave restart from them.
  */
@@ -168,6 +169,7 @@ bool media_load_config(void) {
         else if (!strcmp(k, "chip")) media_config.chip_kb = (uint16_t)atoi(v);
         else if (!strcmp(k, "slow")) media_config.slow_kb = (uint16_t)atoi(v);
         else if (!strcmp(k, "joykeys")) media_config.joykeys = usb_amiga_joykeys_parse(v);
+        else if (!strcmp(k, "meter")) media_config.meter = !strcmp(v, "on") || !strcmp(v, "1");
     }
     f_close(&f);
     if (media_config.df1[0]) media_config.drive1 = true;
@@ -193,6 +195,7 @@ bool media_save_ini(void) {
 #undef NO_DRIVE
     f_printf(&f, "chip=%u\nslow=%u\n", media_config.chip_kb, media_config.slow_kb);
     f_printf(&f, "joykeys=%s\n", usb_amiga_joykeys_name(media_config.joykeys));
+    if (media_config.meter) f_printf(&f, "meter=on\n");
     const bool ok = f_close(&f) == FR_OK;
     printf("media: %s %s\n", INI_PATH, ok ? "saved" : "NOT saved");
     return ok;

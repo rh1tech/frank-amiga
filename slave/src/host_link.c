@@ -376,7 +376,9 @@ static void hostDirectBegin(const frame_regs_t *fr) {
     // Interlace (BPLCON0 LACE): which field this frame is (LOF: long).
     const uint32_t lace = (fr->bplcon0 & 0x4) != 0;
     const uint32_t msg[4] = {
-        MSG_HEADER(MSG_BEGIN, 0, 0, 0),
+        // frank-amiga: extra = the slave's time per frame (meter, 0.1 ms).
+        MSG_HEADER(MSG_BEGIN, 0, 0,
+                   host_emu_tenths_ms < 511u ? host_emu_tenths_ms : 511u),
         (uint16_t)first_row | (uint32_t)step << 16 | (uint32_t)narrow << 24 |
             lace << 25 | (uint32_t)(fr->lof & 1u) << 26,
         (uint32_t)rotation | (uint32_t)height << 16,

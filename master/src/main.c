@@ -379,6 +379,12 @@ static void cmd_sdput(int argc, char **argv) {
 
 /* osd: toggle the menu; osdkey <up|down|left|right|enter|esc|pgup|pgdn>. */
 static void cmd_osd(int argc, char **argv) { osd_toggle(); }
+static void cmd_meter(int argc, char **argv) {
+    if (argc > 1) osd_meter_set(!strcmp(argv[1], "on"));
+    else osd_meter_set(!osd_meter_on());
+    media_config.meter = osd_meter_on();
+    printf("meter %s\n", osd_meter_on() ? "on" : "off");
+}
 static void cmd_fm(int argc, char **argv) { (void)argc; (void)argv; osd_fm_toggle(); }
 static void cmd_osdkey(int argc, char **argv) {
     static const struct { const char *n; uint8_t hid; } k[] = {
@@ -454,6 +460,7 @@ static const console_cmd_t cmds[] = {
     { "reset",  cmd_reset,  "Ctrl-Amiga-Amiga" },
     { "vol",    cmd_vol,    "vol [0..256]: audio output volume" },
     { "osd",    cmd_osd,    "toggle the on-screen menu (F12)" },
+    { "meter",  cmd_meter,  "meter [on|off]: performance meter (EMU ms per frame, FPS)" },
     { "fm",     cmd_fm,     "toggle the file manager (F11)" },
     { "osdkey", cmd_osdkey, "osdkey <up|down|left|right|enter|esc|pgup|pgdn|home|end|bksp>..." },
     { "boot",   cmd_boot,   "reload frank-amiga.ini, upload, cold-start" },
@@ -496,7 +503,9 @@ int main(void) {
     /* Kickstart and disks from the microSD: upload, then the slave
      * restarts from them. Without a configuration it runs whatever it
      * has in flash. */
-    if (media_load_config() && media_boot()) {
+    const bool configured = media_load_config();
+    osd_meter_set(media_config.meter);
+    if (configured && media_boot()) {
         sleep_ms(300);
         for (int i = 0; i < 80 && !slave_hello(); i++) sleep_ms(100);
     }

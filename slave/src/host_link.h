@@ -28,6 +28,10 @@ void host_frame_marks_clear(void);
 /* Frames handed to the ring so far (once per VBL). */
 extern volatile uint32_t host_frames_emulated;
 extern volatile uint32_t hostAudioDrops;
+/* Wall time core 0 spent per emulated frame, pacing waits excluded, in
+ * 0.1 ms (a 25-frame average, main.c); MSG_BEGIN carries it to the
+ * master's meter. */
+extern volatile uint32_t host_emu_tenths_ms;
 
 /* Core 1: turns the emulator's queued records into ring messages while
  * the ring has room; false if there were none. */
