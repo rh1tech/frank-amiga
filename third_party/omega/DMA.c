@@ -687,7 +687,13 @@ static void advanceBitplanePointers(void) {
     // pointers on line $61 and enables its planes on $63, and the modulo of
     // the lines between moved its picture 3 words. Full-width layouts
     // (xSysInfo) keep the calibration.
-    if (!bitplaneLine.inDisplayWindow ||
+    // frank-amiga: nor does a line with no plane enabled (BPU 0 all
+    // along): Agnus has no bitplane slot to add a modulo in. Desert Dream's
+    // intro keeps BPLCON0 at $0200 from its window's top ($1c) to $5d and
+    // loads the pointers above; the last frame's five planes' modulos on
+    // those 65 lines moved its globe 160 pixels left, wrapping into the
+    // next interleaved plane's row.
+    if (!bitplaneLine.inDisplayWindow || !bitplaneLine.enabledMask ||
         (hostDirectActive && !omegaDdfIsFullWidth(chipset.ddfstrt)))
         return;
     fetched = bitplaneLine.fetchEligibleMask != 0

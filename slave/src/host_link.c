@@ -487,11 +487,14 @@ volatile uint32_t host_dpf_rows;
 static int dpf_row = -1;
 static uint32_t dpf_state = ~0u;
 // The playfields' scroll difference (PF2H - PF1H, lores pixels) is applied
-// here: the delayed playfield's plane words are shifted into line with the
-// other's, carrying bits over from the previous block of the run, so every
-// DPF block reaches core 1 / the master aligned (MSG_DPF delta 0), where it
+// here when PF2 is the delayed one: its plane words are shifted into line
+// with PF1's, carrying bits over from the previous block of the run, so the
+// block reaches core 1 / the master aligned (MSG_DPF delta 0), where it
 // takes the direct path. A block that does not follow the previous one
-// starts with empty carry bits.
+// starts with empty carry bits. With PF1 delayed (PF1H > PF2H) the delta
+// goes to the master, which places PF2 at its own offset (dpfPlace()):
+// shifting PF1 here broke Desert Dream's intro globe (PF1H 6-15, PF2H 0)
+// into 16-pixel strips.
 static int dpf_delta;             // PF2H - PF1H of the row's blocks
 static int dpf_next_x = -1000;    // where a following block would start
 static uint64_t dpf_carry[3];     // the shifted planes' recent words, newest low
@@ -501,8 +504,10 @@ static inline uint32_t dpfBlockFlag(int row, uint32_t ev) {
     if (!(ev & EV_DPF))
         return 0;
     const int delta = (int)((ev >> EV_DPF_DELTA_SHIFT) & 31u) - 16;
-    // Sent with delta 0: the shift is done here.
-    const uint32_t st = (ev & EV_PF2PRI) ? 1u << 5 : 0u;
+    // PF2 delayed: sent with delta 0, the shift is done here; PF1 delayed:
+    // the master offsets PF2 by the (negative) delta.
+    const uint32_t st = ((ev & EV_PF2PRI) ? 1u << 5 : 0u) |
+                        (delta < 0 ? (uint32_t)delta & 31u : 0u);
     if (row != dpf_row || st != dpf_state || delta != dpf_delta) {
         if (row != dpf_row || delta != dpf_delta)
             dpf_next_x = -1000;
@@ -543,10 +548,8 @@ static void c1HiresBlock(int row, int x, uint16_t p1, uint16_t p2,
                          uint16_t p3, uint16_t p4, uint32_t ev) {
     hostDirectSyncPalette();
     const uint32_t dpf = dpfBlockFlag(row, ev);
-    if (dpf && dpf_delta) {
-        if (dpf_delta > 0) dpfAlign(x, 16, 2, &p2, &p4, NULL);   // PF2 later
-        else               dpfAlign(x, 16, 2, &p1, &p3, NULL);   // PF1 later
-    }
+    if (dpf && dpf_delta > 0)
+        dpfAlign(x, 16, 2, &p2, &p4, NULL);   // PF2 later
     uint32_t *planes = runAppend(MSG_HEADER(MSG_HIRES, row, 0, 0) | dpf, x, 16, 2);
     planes[0] = p1 | (uint32_t)p2 << 16;
     planes[1] = p3 | (uint32_t)p4 << 16;
@@ -558,10 +561,8 @@ static void c1LoresBlock(int row, int x, uint16_t p1, uint16_t p2, uint16_t p3,
                          uint32_t ev) {
     hostDirectSyncPalette();
     const uint32_t dpf = ham ? 0 : dpfBlockFlag(row, ev);
-    if (dpf && dpf_delta) {
-        if (dpf_delta > 0) dpfAlign(x, 32, 1, &p2, &p4, &p6);    // PF2 later
-        else               dpfAlign(x, 32, 1, &p1, &p3, &p5);    // PF1 later
-    }
+    if (dpf && dpf_delta > 0)
+        dpfAlign(x, 32, 1, &p2, &p4, &p6);    // PF2 later
     uint32_t *planes =
         runAppend(MSG_HEADER(MSG_LORES, row, 0, ham ? 1 : 0) | dpf, x, 32, 3);
     planes[0] = p1 | (uint32_t)p2 << 16;
