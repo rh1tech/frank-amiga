@@ -46,9 +46,23 @@ int dmaRunSlice(int *cpuBalance);   // returns the slots run
 // frank-amiga: the chipset runs on the other core (slave/src/parallel.h).
 void parSync(void);
 #define DMA_CATCH_UP() parSync()
+// A custom register access (word offset `reg`, `write`): some need not
+// wait for the chipset (parSkipSync()); a write that does makes the CPU's
+// shortcuts invalid until the chipset has run on (parWrote()).
+int parSkipSync(int write, unsigned reg);
+void parWrote(void);
+#define DMA_CATCH_UP_REG(write, reg) do { \
+        if (!parSkipSync((write), (reg))) { parSync(); if (write) parWrote(); } \
+    } while (0)
 #else
 #define DMA_CATCH_UP() do { if (dmaInCpu) dmaCatchUp(); } while (0)
+#define DMA_CATCH_UP_REG(write, reg) DMA_CATCH_UP()
 #endif
+// frank-amiga: slots until a computed blit's end (state 3), 0 if none is
+// waiting out its time; whether the blitter is idle or only waiting (its
+// registers may be written without effect on a blit).
+int dmaBlitWaitRemaining(void);
+int dmaBlitterFree(void);
 
 void evenCycle(void);
 void oddCycle(void);

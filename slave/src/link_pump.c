@@ -27,6 +27,7 @@
 #include "upload.h"
 #include "../omega/Floppy.h"
 #include "../omega/m68k.h"
+#include "../omega/DMA.h"
 #include "parallel.h"
 
 #ifdef FRANK_PARALLEL
@@ -238,7 +239,7 @@ void __not_in_flash_func(pump_service)(void) { pump_once(); }
 volatile uint32_t par_cpu_slot, par_dma_slot;
 volatile bool par_running;
 volatile int par_stop_req, par_cpu_parked;
-static uint32_t par_cpu_cycles;          /* CPU cycles run (this core) */
+uint32_t par_cpu_cycles;                 /* CPU cycles run (this core; m68kcpu.c reads it) */
 
 static inline bool par_on_cpu_core(void) { return get_core_num() == 1u; }
 
@@ -258,11 +259,73 @@ void __not_in_flash_func(parSync)(void) {
         __dmb();
         return;
     }
+#ifdef FRANK_PROF
+    const uint32_t c0 = PROF_CYC;
+    prof_c1_syncs++;
+#endif
     par_cpu_parked = 2;
     while (par_dma_slot != t || par_stop_req)
         par_wait_step();
     par_cpu_parked = 0;
+#ifdef FRANK_PROF
+    prof_c1_sync += PROF_CYC - c0;
+#endif
     __dmb();
+}
+
+/* Register accesses that need not wait for the chipset. Core 0 publishes,
+ * after each run of slots and before the CPU can see it got there, what the
+ * blitter is doing (par_publish_blit()); a synced CPU write clears it
+ * (parWrote()), as the write may start a blit or stop its DMA:
+ *  - DMACONR read while a computed blit waits out its time (state 3) and
+ *    the CPU is still before its end: BBUSY stays set until then, and the
+ *    other bits change only with DMACON writes (the CPU's own, synced; or
+ *    the Copper's, which may be seen up to PAR_LEAD_SLOTS late, as chip
+ *    RAM is). Blitter-wait loops poll it (State of the Art's chunky part:
+ *    ~850 a frame), each poll a handoff between the cores;
+ *  - writes to the blitter's registers but BLTSIZE (BLTCON0..BLTDPTL,
+ *    BLTxMOD) while it is idle or only waiting: they are plain stores that
+ *    no blit reads before the next BLTSIZE, which syncs (~1900 a frame). */
+volatile uint32_t par_blit_until;        /* CPU slot BBUSY stays set before */
+volatile bool par_blit_wait, par_blit_free;
+
+void par_publish_blit(uint32_t slot) {
+    const int rem = dmaBlitWaitRemaining();
+    par_blit_until = slot + (uint32_t)rem;
+    par_blit_wait = rem > 0;
+    par_blit_free = dmaBlitterFree() != 0;
+}
+
+void __not_in_flash_func(parWrote)(void) {
+    if (!par_running || !par_on_cpu_core())
+        return;
+    par_blit_wait = false;
+    par_blit_free = false;
+    __dmb();
+}
+
+static inline bool par_blit_reg(unsigned r) {
+    return (r >= 0x20u && r <= 0x2Bu) || (r >= 0x30u && r <= 0x33u);
+}
+
+int __not_in_flash_func(parSkipSync)(int write, unsigned reg) {
+    if (!par_running || !par_on_cpu_core())
+        return 0;
+    if (write) {
+        const unsigned hi = reg >> 8;
+        if (!par_blit_free || !par_blit_reg(reg & 0xFFu) || (hi && !par_blit_reg(hi)))
+            return 0;
+    } else if (reg != 1u || !par_blit_wait) {
+        return 0;
+    }
+    const uint32_t t = (par_cpu_cycles + (uint32_t)m68k_cycles_run()) >> 1;
+    if (!write && (int32_t)(par_blit_until - t) <= 1)
+        return 0;
+    /* The CPU is at t: the chipset may run up to it meanwhile. */
+    __dmb();
+    if ((int32_t)(t - par_cpu_slot) > 0)
+        par_cpu_slot = t;
+    return 1;
 }
 
 /* Runs the CPU for a little while, at most PAR_LEAD_SLOTS ahead of the
@@ -283,7 +346,13 @@ static bool __not_in_flash_func(par_cpu_step)(void) {
     if (budget > PAR_CPU_CHUNK)
         budget = PAR_CPU_CHUNK;
     par_in_cpu = true;
+#ifdef FRANK_PROF
+    const uint32_t c0 = PROF_CYC;
+#endif
     par_cpu_cycles += (uint32_t)m68k_execute(budget);
+#ifdef FRANK_PROF
+    prof_c1_cpu += PROF_CYC - c0;
+#endif
     par_in_cpu = false;
     __dmb();
     par_cpu_slot = par_cpu_cycles >> 1;
@@ -309,6 +378,10 @@ bool par_stop(bool between) {
 }
 
 void par_resume(void) {
+    /* The machine may have changed under the stopped CPU (a savestate, a
+     * reset): no shortcuts until the chipset publishes again. */
+    par_blit_wait = false;
+    par_blit_free = false;
     __dmb();
     par_stop_req = 0;
 }
@@ -324,10 +397,17 @@ static void __not_in_flash_func(pump_loop)(void) {
              * they pile up, the chipset stops at the full queue, the CPU
              * soon after, and this core catches up. */
             const bool ran = par_cpu_step();
+#ifdef FRANK_PROF
+            const uint32_t c0 = PROF_CYC;
+#endif
             if (link_db_get(sess.link))
                 pump_once();
             else if (!ran)
                 host_events_drain_batch(32);
+#ifdef FRANK_PROF
+            if (ran) prof_c1_pump += PROF_CYC - c0;
+            else prof_c1_lead += PROF_CYC - c0;
+#endif
             continue;
         }
 #endif
@@ -346,7 +426,14 @@ static void fs_irq(uint gpio, uint32_t events) {
     }
 }
 
+#ifdef FRANK_PROF
+volatile uint32_t prof_c1_cpu, prof_c1_sync, prof_c1_syncs, prof_c1_lead, prof_c1_pump;
+#endif
+
 void pump_core1_entry(void) {
+#ifdef FRANK_PROF
+    prof_dwt_on();
+#endif
     link_init(&link, LINK_PIO_SLAVE, S_LINK_B_DATA_BASE, S_LINK_A_DATA_BASE,
               S_LINK_DB_OUT, S_LINK_DB_IN, S_LINK_FS, false);
     link_set_bulk_clkdiv(&link, 1.0f);

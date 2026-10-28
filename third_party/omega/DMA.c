@@ -936,6 +936,20 @@ static void slotNextUpdate(void) {
         // Copper / the blitter (dmaCopperRun()).
         if (!plane)
             plane = f == evenCycle ? SLOT_COPPER : f == oddCycle ? SLOT_BLITTER : 0;
+        // A plane 2-6 slot that fetches nothing (plane disabled, or outside
+        // the window) is free (planeN() -> freeCycle(); its data latch is
+        // cleared once per line): the Copper's if even, the blitter's if
+        // odd; plane2() gives a disabled plane's slot in the window to the
+        // blitter only. With 3 planes, the Copper's free slots in the window
+        // are plane 4-6 slots (State of the Art's chunky part: 12k MOVE
+        // words a frame went through planeN() and evenCycle()).
+        if (!plane && h < SLOT_LAST - 1 && h != bitplaneLine.lastCycle &&
+            (f == plane2 || f == plane3 || f == plane4 || f == plane5 || f == plane6) &&
+            !slotIsActive(f, h)) {
+            const int inWindow = lineBitplaneWindow && h >= chipset.ddfstrt &&
+                                 h <= bitplaneLine.lastCycle;
+            plane = (f == plane2 && inWindow) || (h & 1) ? SLOT_BLITTER : SLOT_COPPER;
+        }
         slotPlane[h] = (uint8_t)plane;
     }
 }
@@ -2642,6 +2656,18 @@ static void blitEnd(void) {
 void blitterFinished(void) {
     if (blitTime <= 0)
         blitEnd();
+}
+
+int dmaBlitWaitRemaining(void) {
+    if (blitterState != 3)
+        return 0;
+    const int32_t rem = (int32_t)(blitDeadline - dmaSlotClock);
+    return rem > 0 ? (int)rem : 0;
+}
+
+int dmaBlitterFree(void) {
+    return blitterState == 3 ||
+           (blitterState == 0 && !(chipset.dmaconr & 0x4000));
 }
 
 void blitterNewBlit(void) {

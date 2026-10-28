@@ -298,8 +298,15 @@ void host_frame_paced(void) {
 }
 
 /* ── Emulation loop (upstream main.c) ── */
+#ifdef FRANK_PROF
+volatile uint32_t prof_c0_dma, prof_c0_wait_cpu;
+#endif
+
 static void __not_in_flash_func(emulation_loop)(void) {
     static int cpu_cycle_balance;
+#ifdef FRANK_PROF
+    prof_dwt_on();
+#endif
     uint64_t next_report = time_us_64() + 2000000u;
     uint32_t last_frames = 0;
     for (;;) {
@@ -318,13 +325,26 @@ static void __not_in_flash_func(emulation_loop)(void) {
             uint32_t n = target - par_dma_slot;
             if (!n) {
                 /* Waiting for the CPU: build messages meanwhile. */
+#ifdef FRANK_PROF
+                const uint32_t c0 = PROF_CYC;
+#endif
                 upload_core0_hold();
                 host_events_drain_batch(16);
+#ifdef FRANK_PROF
+                prof_c0_wait_cpu += PROF_CYC - c0;
+#endif
                 continue;
             }
             if (n > 227u)
                 n = 227u;
+#ifdef FRANK_PROF
+            const uint32_t c0 = PROF_CYC;
             dma_run((int)n);
+            prof_c0_dma += PROF_CYC - c0;
+#else
+            dma_run((int)n);
+#endif
+            par_publish_blit(par_dma_slot + n);
             __dmb();
             par_dma_slot += n;
         }
@@ -394,6 +414,22 @@ static void __not_in_flash_func(emulation_loop)(void) {
                        (unsigned long)(dma_cyc_p1 / fr / 1000u));
                 dma_cyc_slots = dma_cyc_copper = dma_cyc_colour = dma_cyc_blit = dma_cyc_cpu = dma_cyc_dma = 0;
                 dma_cyc_wait = dma_cyc_eol = dma_cyc_p1 = 0;
+            }
+#endif
+#ifdef FRANK_PROF
+            {
+                const uint32_t fr = f - last_frames ? f - last_frames : 1u;
+                static uint32_t evq_w0, evq_u0;
+                printf("prof evq waits %lu (%lu us)/frame; kcyc/frame: c0 dma %lu wait-cpu %lu | c1 cpu %lu (sync waits %lu, %lu syncs) lead-wait %lu pump %lu\n",
+                       (unsigned long)((host_evq_waits - evq_w0) / fr), (unsigned long)((host_evq_wait_us - evq_u0) / fr),
+                       (unsigned long)(prof_c0_dma / fr / 1000u), (unsigned long)(prof_c0_wait_cpu / fr / 1000u),
+                       (unsigned long)(prof_c1_cpu / fr / 1000u), (unsigned long)(prof_c1_sync / fr / 1000u),
+                       (unsigned long)(prof_c1_syncs / fr), (unsigned long)(prof_c1_lead / fr / 1000u),
+                       (unsigned long)(prof_c1_pump / fr / 1000u));
+                evq_w0 = host_evq_waits;
+                evq_u0 = host_evq_wait_us;
+                prof_c0_dma = prof_c0_wait_cpu = 0;
+                prof_c1_cpu = prof_c1_sync = prof_c1_syncs = prof_c1_lead = prof_c1_pump = 0;
             }
 #endif
             last_frames = f;

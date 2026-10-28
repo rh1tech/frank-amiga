@@ -37,7 +37,7 @@ extern volatile uint32_t host_emu_tenths_ms;
  * the ring has room; false if there were none. */
 bool host_events_drain(void);
 bool host_events_drain_batch(uint32_t budget);
-extern volatile uint32_t host_evq_waits;
+extern volatile uint32_t host_evq_waits, host_evq_wait_us;
 
 /* Called once per emulated frame, after it is queued: pacing hook. */
 void host_frame_paced(void);

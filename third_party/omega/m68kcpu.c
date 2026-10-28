@@ -733,6 +733,19 @@ static int __attribute__((noinline)) m68k_execute_running(int num_cycles)
 					cycles = (cycles - 1) + (((((ir >> 9) - 1) & 7) + 1) << 1);
 				m68ki_handler_ptrs[index]();
 				USE_CYCLES(cycles);
+#ifdef FRANK_PARALLEL
+				/* frank-amiga: the chipset's core runs up to the CPU
+				   (slave/src/parallel.h); publish its progress at every
+				   instruction, not only at the end of the slice, or after
+				   a register access (the chipset caught up) it waits for
+				   the whole slice. */
+				{
+					extern uint32_t par_cpu_cycles;
+					extern volatile uint32_t par_cpu_slot;
+					par_cpu_slot = (par_cpu_cycles +
+					                (uint32_t)(m68ki_initial_cycles - GET_CYCLES())) >> 1;
+				}
+#endif
 			}
 #else
 			m68ki_call_instruction(REG_IR);

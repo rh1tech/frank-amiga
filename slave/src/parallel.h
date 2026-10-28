@@ -47,4 +47,19 @@ void par_resume(void);
  * CPU's current slot (DMA_CATCH_UP()). */
 void parSync(void);
 
+/* Core 0, after running the chipset up to `slot` and before publishing it:
+ * what the blitter is doing, for parSkipSync() (link_pump.c). */
+void par_publish_blit(uint32_t slot);
+
+#ifdef FRANK_PROF
+/* Profiling (DWT cycles, each core its own counter): where the cores'
+ * time goes; main.c prints them per frame. */
+#define PROF_CYC (*(volatile uint32_t *)0xE0001004u)
+static inline void prof_dwt_on(void) {
+    *(volatile uint32_t *)0xE000EDFCu |= 1u << 24;   /* DEMCR.TRCENA */
+    *(volatile uint32_t *)0xE0001000u |= 1u;         /* CYCCNTENA */
+}
+extern volatile uint32_t prof_c0_dma, prof_c0_wait_cpu;
+extern volatile uint32_t prof_c1_cpu, prof_c1_sync, prof_c1_syncs, prof_c1_lead, prof_c1_pump;
+#endif
 #endif

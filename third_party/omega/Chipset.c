@@ -968,6 +968,12 @@ void __attribute__((noinline)) COLOUR_FUNC(setColour)(unsigned n,
     const uint32_t c0 = *(volatile uint32_t *)0xE0001004u;
 #endif
     const uint16_t old = (&chipset.color00)[n];
+    // frank-amiga: a write of the value already there changes nothing
+    // (half the Copper's writes in State of the Art's chunky part: COLOR01
+    // and COLOR02 rewritten on every chunky pixel); the board would stream
+    // each one to core 1 and the master.
+    if (old == value)
+        return;
     (&chipset.color00)[n] = value; //old register
 #ifdef PICO_BUILD
     // frank-amiga: the board streams the colour registers themselves; the

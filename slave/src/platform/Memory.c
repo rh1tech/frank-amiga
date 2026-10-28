@@ -165,8 +165,8 @@ unsigned int chipReadByte(unsigned int address) {
     if (address > 0xDFFFFFu) return memory_expansion_read(address);
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
-        DMA_CATCH_UP();
         uint32_t off = address & 0x1FFu;
+        DMA_CATCH_UP_REG(0, off >> 1);
         debugChipAddress = off;
         if (off >= 32u) return 0;
         return getChipReg8[off]();
@@ -200,8 +200,8 @@ unsigned int chipReadWord(unsigned int address) {
     if (address > 0xDFFFFFu) return memory_expansion_read_word(address);
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
-        DMA_CATCH_UP();
         uint32_t off = (address & 0x1FFu) >> 1;
+        DMA_CATCH_UP_REG(0, off);
         // Only a handful of registers are readable; DeniseID is the fallback
         if (off > 16) {
             if (off == 62) return chipset.deniseid;
@@ -338,8 +338,8 @@ void chipWriteWord(unsigned int address, unsigned int value) {
     }
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
-        DMA_CATCH_UP();
         uint32_t off = (address & 0x1FFu) >> 1;
+        DMA_CATCH_UP_REG(1, off);
         // The registers repeat every 0x200 (only A1-A8 select one).
         debugChipAddress = off;
         debugChipValue   = value;
@@ -380,8 +380,10 @@ void chipWriteLong(unsigned int address, unsigned int value) {
     if (address >= 0xF80000u) return;
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
-        DMA_CATCH_UP();
         uint32_t off = (address & 0x1FFu) >> 1;
+        // Two registers: both must allow it (a long write to BLTDPTL also
+        // writes BLTSIZE).
+        DMA_CATCH_UP_REG(1, off | ((off + 1u) << 8));
         debugChipAddress = off;
         dmaIdleCacheValid = 0;
         putChipReg32[off](value);
