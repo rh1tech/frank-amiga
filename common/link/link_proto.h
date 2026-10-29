@@ -90,6 +90,7 @@ enum {
     LINK_BOOT_DF1_DISK = 4,  /* DF1 has the uploaded disk               */
     LINK_BOOT_DF0_EXT = 0x1000, /* DF0 / DF1 hold flux images (tracks from */
     LINK_BOOT_DF1_EXT = 0x2000, /* the master, TRACKREQ/TRACKDATA)         */
+    LINK_BOOT_NTSC = 0x4000,    /* an NTSC machine (60 Hz, 263 lines)       */
     /* bits 8-9: chip RAM (0 512 KB, 1 1 MB, 2 2 MB); bits 10-11: slow RAM
      * at 0xC00000 (0 512 KB, 1 none, 2 1 MB). 0 is an A500's 512 + 512. */
     LINK_BOOT_CHIP_SHIFT = 8,

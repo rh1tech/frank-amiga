@@ -33,6 +33,7 @@ card's test set on the board and reports fps, last PC and hang/reset flags
                             df1=/amiga/adf/game-2.adf      (optional; connects DF1)
                             drives=2                       (DF1 connected, empty)
                             joykeys=arrows                 (off | arrows | numpad)
+                            video=pal                      pal | ntsc (60 Hz, 263 lines)
                             chip=512                       chip RAM KB: 512 | 1024 | 2048
                             slow=512                       slow RAM KB at $C00000: 0 | 512 | 1024
 /amiga/kick/                Kickstart images (your own licensed copies, or AROS)
@@ -64,7 +65,9 @@ into the ADF file on the card about a second later.
 
 ## Status
 
-- Both halves at 504 MHz; HDMI 640x480@50 locked to the emulated PAL frame,
+- Both halves at 504 MHz; HDMI 640x480@50 locked to the emulated PAL frame
+  (640x480@60 for an NTSC machine: `video=ntsc`, console `standard ntsc` or
+  the F12 menu; a change restarts the board),
   Paula on the I2S DAC, microSD, USB HID.
 - Machine: an A500 by default (512 KB chip + 512 KB slow RAM, smaller chip
   sizes mirroring as Agnus does), up to 2 MB chip / 1 MB slow.

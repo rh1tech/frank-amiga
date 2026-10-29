@@ -9,7 +9,24 @@
 #define OMEGA_VIDEO_STANDARD OMEGA_VIDEO_NTSC
 #endif
 
-#if OMEGA_VIDEO_STANDARD == OMEGA_VIDEO_PAL
+#if OMEGA_VIDEO_RUNTIME
+// frank-amiga: the standard chosen at boot (the board's ini, video=pal|ntsc)
+// instead of at compile time: the same constants as below, from one variable
+// that is set before the chipset starts and never changes while it runs.
+// OMEGA_VIDEO_STANDARD only gives the default.
+extern int omegaVideoNtsc;
+#define OMEGA_VIDEO_IS_NTSC           (omegaVideoNtsc != 0)
+#define OMEGA_VIDEO_NAME              (omegaVideoNtsc ? "NTSC" : "PAL")
+#define OMEGA_VIDEO_FRAME_LINES       (omegaVideoNtsc ? 263 : 313)
+#define OMEGA_VIDEO_VPOSR_ID          (omegaVideoNtsc ? 0x1000 : 0x0000)
+#define OMEGA_VIDEO_RATE_NUMERATOR    (omegaVideoNtsc ? 60000 : 50)
+#define OMEGA_VIDEO_RATE_DENOMINATOR  (omegaVideoNtsc ? 1001 : 1)
+#define OMEGA_VIDEO_NATIVE_HEIGHT     512
+#define OMEGA_VIDEO_VIEWPORT_Y_OFFSET (omegaVideoNtsc ? 40 : 96)
+#define OMEGA_SPRITE_FIRST_LINE       (omegaVideoNtsc ? 20 : 25)
+#define OMEGA_VIDEO_LONG_LINES        (omegaVideoNtsc ? 1 : 0)
+#elif OMEGA_VIDEO_STANDARD == OMEGA_VIDEO_PAL
+#define OMEGA_VIDEO_IS_NTSC           0
 #define OMEGA_VIDEO_NAME              "PAL"
 #define OMEGA_VIDEO_FRAME_LINES       313
 #define OMEGA_VIDEO_VPOSR_ID          0x0000
@@ -22,6 +39,7 @@
 // Colour clocks per line: 227 (hPos 0..0xE2).
 #define OMEGA_VIDEO_LONG_LINES        0
 #elif OMEGA_VIDEO_STANDARD == OMEGA_VIDEO_NTSC
+#define OMEGA_VIDEO_IS_NTSC           1
 #define OMEGA_VIDEO_NAME              "NTSC"
 #define OMEGA_VIDEO_FRAME_LINES       263
 #define OMEGA_VIDEO_VPOSR_ID          0x1000

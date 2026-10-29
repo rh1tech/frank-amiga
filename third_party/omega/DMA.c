@@ -838,7 +838,7 @@ static void slotTableUpdate(int hires) {
 // 0..0xE2); NTSC lines alternate 228 and 227. A 228-slot PAL line made the
 // CIA E clock count 71,364 ticks per 5 frames instead of 71,051, which the
 // Amiga Test Kit reads as an NTSC machine.
-static int lineLast = OMEGA_VIDEO_LONG_LINES ? SLOT_LAST : SLOT_LAST - 1;
+static int lineLast = SLOT_LAST - 1;   // dmaVideoStandardInit() for NTSC
 static uint8_t slotNext[SLOT_LAST + 1];
 // Inside the bitplane fetch window, slotRunEnd[h] is the first slot >= h
 // that is not a bitplane or free slot of the window (h itself elsewhere).
@@ -1096,12 +1096,21 @@ static void rotatedTailEndOfLine(void) {
 // do not fit), once the same move was wanted for a few frames in a row.
 #define DIRECT_SHOWN_FIRST 8
 #define DIRECT_SHOWN_ROWS 240
+#if OMEGA_VIDEO_RUNTIME
+// NTSC: lines 23..262 are the shown rows; nothing comes later to follow.
+#define DIRECT_FIRST_LINE_STD (omegaVideoNtsc ? 15 : 44)
+#else
 #define DIRECT_FIRST_LINE_STD 44
+#endif
+#if OMEGA_VIDEO_RUNTIME
+#define DIRECT_FIRST_LINE_MIN (omegaVideoNtsc ? 15 : 20)
+#else
 #define DIRECT_FIRST_LINE_MIN 20
+#endif
 #define DIRECT_SETTLE_FRAMES 5
-int omegaDirectFirstLine = DIRECT_FIRST_LINE_STD;
+int omegaDirectFirstLine = 44;   // PAL's; dmaVideoStandardInit()
 static int contentTop = 0x7fff, contentBottom = -1;
-static int wantFirst = DIRECT_FIRST_LINE_STD, wantFrames;
+static int wantFirst = 44, wantFrames;
 
 static void directWindowFrame(void) {
     const int top = contentTop, bottom = contentBottom;
@@ -1160,9 +1169,8 @@ static void __attribute__((noinline)) dmaEndOfLine(void) {
     }
     dmaIdleCacheValid = 0;   // the Copper's comparisons depend on the line
     internal.hPos = 0;
-#if OMEGA_VIDEO_LONG_LINES
-    lineLast ^= SLOT_LAST ^ (SLOT_LAST - 1);   // long and short alternate
-#endif
+    if (OMEGA_VIDEO_LONG_LINES)
+        lineLast ^= SLOT_LAST ^ (SLOT_LAST - 1);   // long and short alternate
     internal.vPos +=1;
     CIATODEvent(&CIAB);
 
@@ -2938,3 +2946,16 @@ int blitterCopyCycle(){
     
     return 2; // more copy to do!
 }
+
+// frank-amiga: the line length for the video standard (NTSC starts with a
+// long line, 228 colour clocks), before the chipset runs; the image's first
+// line too (DisplayLayout.h).
+void dmaVideoStandardInit(void) {
+    lineLast = OMEGA_VIDEO_LONG_LINES ? SLOT_LAST : SLOT_LAST - 1;
+#if OMEGA_DYNAMIC_FIRST_LINE
+    omegaDirectFirstLine = wantFirst = DIRECT_FIRST_LINE_STD;
+#endif
+}
+#if OMEGA_VIDEO_RUNTIME
+int omegaVideoNtsc = OMEGA_VIDEO_STANDARD == OMEGA_VIDEO_NTSC;
+#endif

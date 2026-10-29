@@ -64,6 +64,7 @@ void parWrote(void);
 int dmaBlitWaitRemaining(void);
 int dmaBlitterFree(void);
 
+void dmaVideoStandardInit(void);
 void evenCycle(void);
 void oddCycle(void);
 void dramCycle(void);

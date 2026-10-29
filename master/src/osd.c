@@ -364,7 +364,7 @@ void osd_fm_toggle(void) {
     visible = true;
 }
 
-enum { I_DF0, I_DF1, I_KICK, I_RESET, I_SAVE, I_LOAD, I_VOL, I_JOY, I_METER, I_EXIT, I_COUNT };
+enum { I_DF0, I_DF1, I_KICK, I_RESET, I_SAVE, I_LOAD, I_VOL, I_JOY, I_METER, I_VIDEO, I_EXIT, I_COUNT };
 
 static void draw(void) {
     char line[COLS + 1];
@@ -386,6 +386,8 @@ static void draw(void) {
         put(2 + I_JOY, line);
         snprintf(line, sizeof line, " Performance meter: %s", meter_on ? "on" : "off");
         put(2 + I_METER, line);
+        snprintf(line, sizeof line, " Video: %s   (Enter: restart)", media_config.ntsc ? "NTSC 60 Hz" : "PAL 50 Hz");
+        put(2 + I_VIDEO, line);
         put(2 + I_EXIT, " Back to the Amiga");
         put(ROWS - 1, " up/down, Enter, Esc");
         highlight = (uint8_t)(2 + sel);
@@ -483,6 +485,7 @@ void osd_key(uint8_t hid, bool down) {
         case I_SAVE: media_state(false); visible = false; break;
         case I_LOAD: media_state(true); visible = false; break;
         case I_METER: osd_meter_set(!meter_on); media_config.meter = meter_on; break;
+        case I_VIDEO: media_set_standard(!media_config.ntsc); break;
         case I_JOY: media_config.joykeys = (uint8_t)((media_config.joykeys + 1) % JOYKEYS_COUNT); break;
         case I_EXIT: visible = false; break;
         }

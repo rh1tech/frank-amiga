@@ -155,6 +155,7 @@ static void cmd_hello(int argc, char **argv) { slave_hello(); }
 
 /* ── The Amiga display ── */
 static bool amiga_running;
+int omegaVideoNtsc;   /* VideoStandard.h (OMEGA_VIDEO_RUNTIME) */
 
 /* Core 1 renders (hostCore1Loop()); the scanout interrupts (DMA end of
  * line, row expansion) run on core 0, which otherwise mostly waits on the
@@ -166,7 +167,11 @@ static void core1_amiga(void) {
 
 static void amiga_start(void) {
     if (amiga_running) return;
-    if (!video_init(VIDEO_640x480p50, denise_row, denise_frame_start)) {
+    /* The machine's standard picks the display's rate (the emulation is
+     * paced by it): PAL 50 Hz, NTSC 60 Hz. Fixed from boot. */
+    omegaVideoNtsc = media_config.ntsc;
+    if (!video_init(omegaVideoNtsc ? VIDEO_640x480p60 : VIDEO_640x480p50,
+                    denise_row, denise_frame_start)) {
         printf("amiga: video init failed\n");
         return;
     }
@@ -391,6 +396,10 @@ static void cmd_sdput(int argc, char **argv) {
 
 /* osd: toggle the menu; osdkey <up|down|left|right|enter|esc|pgup|pgdn>. */
 static void cmd_osd(int argc, char **argv) { osd_toggle(); }
+static void cmd_standard(int argc, char **argv) {
+    if (argc < 2) { printf("video=%s\n", media_config.ntsc ? "ntsc" : "pal"); return; }
+    media_set_standard(!strcmp(argv[1], "ntsc"));
+}
 static void cmd_meter(int argc, char **argv) {
     if (argc > 1) osd_meter_set(!strcmp(argv[1], "on"));
     else osd_meter_set(!osd_meter_on());
@@ -475,6 +484,7 @@ static const console_cmd_t cmds[] = {
     { "reset",  cmd_reset,  "Ctrl-Amiga-Amiga" },
     { "vol",    cmd_vol,    "vol [0..256]: audio output volume" },
     { "osd",    cmd_osd,    "toggle the on-screen menu (F12)" },
+    { "standard", cmd_standard, "standard [pal|ntsc]: the machine's video standard (saves, restarts)" },
     { "meter",  cmd_meter,  "meter [on|off]: performance meter (EMU ms per frame, FPS)" },
     { "fm",     cmd_fm,     "toggle the file manager (F11)" },
     { "osdkey", cmd_osdkey, "osdkey <up|down|left|right|enter|esc|pgup|pgdn|home|end|bksp>..." },

@@ -27,7 +27,14 @@ enum {
 // early (Kickstart and Workbench open theirs at line 5 and start the
 // bitplanes with the Copper) need no per-layout anchor, and the borders
 // around a smaller window show their own lines.
-#if OMEGA_VIDEO_STANDARD == OMEGA_VIDEO_PAL
+#if OMEGA_VIDEO_RUNTIME && OMEGA_DYNAMIC_FIRST_LINE
+// frank-amiga: PAL or NTSC at run time. The image keeps PAL's 256 rows;
+// under NTSC its first line starts at 15, so the displayed rows (8..247)
+// are lines 23..262, every line an NTSC frame shows (see DMA.c).
+extern int omegaDirectFirstLine;
+#define OMEGA_DIRECT_FIRST_LINE omegaDirectFirstLine
+#define OMEGA_DIRECT_ROWS 256
+#elif OMEGA_VIDEO_STANDARD == OMEGA_VIDEO_PAL
 #if OMEGA_DYNAMIC_FIRST_LINE
 // frank-amiga: the display shows fewer rows than the image (240 of 256), so
 // DMA.c moves the image's first line to keep the bitplanes of overscan

@@ -42,7 +42,7 @@ add_executable(frank-amiga-master
 target_include_directories(frank-amiga-master PRIVATE src src/usb
     ${REPO_ROOT}/common/amiga ${REPO_ROOT}/third_party/omega ${FRANK_PLATFORM_DIR})
 target_compile_definitions(frank-amiga-master PRIVATE ${FRANK_DEFINITIONS}
-    PICO_BUILD=1 OMEGA_VIDEO_STANDARD=1 OMEGA_ENABLE_HDMI=1 OMEGA_RTG=0
+    PICO_BUILD=1 OMEGA_VIDEO_STANDARD=1 OMEGA_VIDEO_RUNTIME=1 OMEGA_ENABLE_HDMI=1 OMEGA_RTG=0
     RING_WORDS=12288u)   # 48 KB render ring (master SRAM is tight)
 target_compile_options(frank-amiga-master PRIVATE ${FRANK_COPTS})
 target_link_libraries(frank-amiga-master

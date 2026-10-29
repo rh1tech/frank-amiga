@@ -14,6 +14,7 @@
  *   joykeys=arrows                  keyboard joystick in port 2: off, arrows
  *                                   (Right Ctrl/Alt fire), numpad (0 . fire)
  *   meter=on                        performance meter (EMU ms, FPS) shown
+ *   video=ntsc                      NTSC machine (60 Hz, 263 lines); default pal
  * Uploads go over the link (link_proto.h LINK_OP_UPLOAD_*) with the stream
  * paused; BOOT then makes the slave restart from them.
  */
@@ -24,6 +25,7 @@
 #include <string.h>
 
 #include "pico/stdlib.h"
+#include "hardware/watchdog.h"
 #include "ff.h"
 
 #include "link_proto.h"
@@ -175,6 +177,7 @@ bool media_load_config(void) {
         else if (!strcmp(k, "slow")) media_config.slow_kb = (uint16_t)atoi(v);
         else if (!strcmp(k, "joykeys")) media_config.joykeys = usb_amiga_joykeys_parse(v);
         else if (!strcmp(k, "meter")) media_config.meter = !strcmp(v, "on") || !strcmp(v, "1");
+        else if (!strcmp(k, "video")) media_config.ntsc = !strcasecmp(v, "ntsc");
     }
     f_close(&f);
     if (media_config.df1[0]) media_config.drive1 = true;
@@ -201,6 +204,7 @@ bool media_save_ini(void) {
     f_printf(&f, "chip=%u\nslow=%u\n", media_config.chip_kb, media_config.slow_kb);
     f_printf(&f, "joykeys=%s\n", usb_amiga_joykeys_name(media_config.joykeys));
     if (media_config.meter) f_printf(&f, "meter=on\n");
+    if (media_config.ntsc) f_printf(&f, "video=ntsc\n");
     const bool ok = f_close(&f) == FR_OK;
     printf("media: %s %s\n", INI_PATH, ok ? "saved" : "NOT saved");
     return ok;
@@ -215,6 +219,7 @@ bool media_boot(void) {
     const uint32_t chip = media_config.chip_kb >= 2048 ? 2u : media_config.chip_kb >= 1024 ? 1u : 0u;
     const uint32_t slow = media_config.slow_kb == 0 ? 1u : media_config.slow_kb >= 1024 ? 2u : 0u;
     flags |= chip << LINK_BOOT_CHIP_SHIFT | slow << LINK_BOOT_SLOW_SHIFT;
+    if (media_config.ntsc) flags |= LINK_BOOT_NTSC;
     for (int d = 0; d < 2 && ok; d++) {
         const char *path = d ? media_config.df1 : media_config.df0;
         scp_close(&scp[d]);
@@ -468,3 +473,16 @@ bool media_sdput(uint32_t offset, uint32_t size, const char *path) {
 }
 
 void media_init(link_session_t *s) { sess = s; }
+
+/* PAL or NTSC: the display's rate is fixed from boot, so a change is saved
+ * to the ini and the board restarts (the master's reset restarts the
+ * slave too). */
+void media_set_standard(bool ntsc) {
+    if (ntsc == media_config.ntsc) return;
+    media_config.ntsc = ntsc;
+    const bool saved = media_save_ini();
+    printf("media: video=%s %s, restarting\n", ntsc ? "ntsc" : "pal",
+           saved ? "saved" : "NOT saved");
+    sleep_ms(200);
+    watchdog_reboot(0, 0, 0);
+}

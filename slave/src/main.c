@@ -454,14 +454,17 @@ int main(void) {
 
     psram_init_with_freq(S_PSRAM_CS_PIN, FRANK_PSRAM_MAX_MHZ);
     report_previous_fault();
-    printf("Video: %s (%d lines)\n", OMEGA_VIDEO_NAME, OMEGA_VIDEO_FRAME_LINES);
-
+    
     {   /* The machine's RAM, as the master booted us (an A500's by default). */
         const uint32_t bf = upload_boot_flags();
         static const uint32_t chip[4] = { 0x80000u, 0x100000u, 0x200000u, 0x80000u };
         static const uint32_t slow[4] = { 0x80000u, 0u, 0x100000u, 0x80000u };
         memory_configure(chip[(bf >> LINK_BOOT_CHIP_SHIFT) & 3u],
                          slow[(bf >> LINK_BOOT_SLOW_SHIFT) & 3u]);
+        /* The video standard, before anything reads it. */
+        omegaVideoNtsc = (bf & LINK_BOOT_NTSC) != 0;
+        dmaVideoStandardInit();
+        printf("Video: %s (%d lines)\n", OMEGA_VIDEO_NAME, OMEGA_VIDEO_FRAME_LINES);
     }
     memory_init();
     multicore_launch_core1(pump_core1_entry);

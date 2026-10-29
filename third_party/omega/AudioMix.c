@@ -25,10 +25,8 @@ static int8_t sample[4];   // each channel's sample at the current position
 // output interval.
 static int32_t accum[4];
 // Colour clocks per output sample and until the next one (16.16).
-static const uint32_t outStep = (uint32_t)(
-    ((uint64_t)OMEGA_VIDEO_LINE_CCK2 * OMEGA_VIDEO_FRAME_LINES *
-     OMEGA_VIDEO_RATE_NUMERATOR << 16) /
-    ((uint64_t)2 * OMEGA_VIDEO_RATE_DENOMINATOR * AUDIO_RATE));
+// frank-amiga: set by audioMixInit() (the standard may be chosen at run time).
+static uint32_t outStep;
 static int32_t outNext;
 // accum (sample x clocks in 16.12) x volume -> fraction of full scale for
 // one output interval; two channels per side, so each counts half.
@@ -47,6 +45,10 @@ static Biquad ledL, ledR;
 
 // Called once, before the first record (libm: flash code on the RP2350).
 void audioMixInit(void) {
+    outStep = (uint32_t)(
+        ((uint64_t)OMEGA_VIDEO_LINE_CCK2 * OMEGA_VIDEO_FRAME_LINES *
+         OMEGA_VIDEO_RATE_NUMERATOR << 16) /
+        ((uint64_t)2 * OMEGA_VIDEO_RATE_DENOMINATOR * AUDIO_RATE));
     outScale = 1.0f / ((float)(outStep >> 4) * 128.0f * 64.0f) * 0.5f;
     const float pi = 3.14159265f;
     fixedA = 1.0f - expf(-2.0f * pi * 4900.0f / AUDIO_RATE);
