@@ -477,7 +477,8 @@ int main(int argc, char **argv) {
         }
 
         // OMEGA_KEYS: press each listed key at its frame, release it the
-        // next frame (as the keyboard's serial line would deliver it).
+        // next frame (as the keyboard's serial line would deliver it), or
+        // OMEGA_KEY_HOLD frames later.
         static const char *keys;
         static int keysRead, keyReleaseFrame = -1;
         static uint8_t keyHeld;
@@ -498,7 +499,11 @@ int main(int argc, char **argv) {
                 keys = *next == ',' ? next + 1 : next;
                 CIAWrite(&CIAA, 0xC, (uint8_t)~(keyHeld << 1));
                 keyboardInt();
-                keyReleaseFrame = (int)native_frame_counter + 1;
+                {   // OMEGA_KEY_HOLD=<frames>: hold each key that long (default 1)
+                    static int hold = -1;
+                    if (hold < 0) { const char *e = getenv("OMEGA_KEY_HOLD"); hold = e ? atoi(e) : 1; if (hold < 1) hold = 1; }
+                    keyReleaseFrame = (int)native_frame_counter + hold;
+                }
                 printf("  vbl=%lu key %02x\n", native_frame_counter, keyHeld);
             }
         }

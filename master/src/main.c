@@ -234,12 +234,24 @@ static void cmd_type(int argc, char **argv) {
 }
 
 /* key <hex code> [up|down|tap] */
+/* `key <code> tap`: the key held down, released at this time. */
+static uint8_t tap_code;
+static uint64_t tap_release_us;
+
 static void cmd_key(int argc, char **argv) {
     if (argc < 2) return;
     const uint8_t code = (uint8_t)strtoul(argv[1], NULL, 16);
     const char *what = argc > 2 ? argv[2] : "tap";
     if (strcmp(what, "up")) input_key(code, false);
-    if (strcmp(what, "down")) input_key(code, true);
+    if (!strcmp(what, "tap")) {
+        /* Held as long as a typed key (~100 ms), released by main_poll():
+         * a press and release a frame apart slip past screens that look
+         * at the key state now and then (HeroQuest's story pages). */
+        tap_code = code;
+        tap_release_us = time_us_64() + 100000u;
+    } else if (strcmp(what, "down")) {
+        input_key(code, true);
+    }
 }
 
 /* state save|load: the slave's savestate. */
@@ -420,6 +432,9 @@ static void cmd_vol(int argc, char **argv) {
 }
 
 static void main_poll(void) {
+    if (tap_release_us && time_us_64() >= tap_release_us &&
+        input_key(tap_code, true))
+        tap_release_us = 0;
     if (amiga_running) {
         usb_amiga_poll();
         input_poll();
