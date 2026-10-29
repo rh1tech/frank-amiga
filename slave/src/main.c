@@ -463,7 +463,7 @@ int main(void) {
                          slow[(bf >> LINK_BOOT_SLOW_SHIFT) & 3u]);
         /* The video standard, before anything reads it. */
         omegaVideoNtsc = (bf & LINK_BOOT_NTSC) != 0;
-        dmaVideoStandardInit();
+        dmaVideoStandardInit((bf & LINK_BOOT_ROWS256) ? 256 : 240);
         printf("Video: %s (%d lines)\n", OMEGA_VIDEO_NAME, OMEGA_VIDEO_FRAME_LINES);
     }
     memory_init();

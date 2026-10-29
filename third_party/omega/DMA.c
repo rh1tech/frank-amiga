@@ -1094,8 +1094,10 @@ static void rotatedTailEndOfLine(void) {
 // beam lines that fetched bitplanes; when they leave that window the image's
 // first line moves just enough to bring them back (the top wins when they
 // do not fit), once the same move was wanted for a few frames in a row.
-#define DIRECT_SHOWN_FIRST 8
-#define DIRECT_SHOWN_ROWS 240
+// frank-amiga: or all 256 (dmaVideoStandardInit(), a 640x512 display).
+static int directShownFirst = 8, directShownRows = 240;
+#define DIRECT_SHOWN_FIRST directShownFirst
+#define DIRECT_SHOWN_ROWS directShownRows
 #if OMEGA_VIDEO_RUNTIME
 // NTSC: lines 23..262 are the shown rows; nothing comes later to follow.
 #define DIRECT_FIRST_LINE_STD (omegaVideoNtsc ? 15 : 44)
@@ -2950,7 +2952,11 @@ int blitterCopyCycle(){
 // frank-amiga: the line length for the video standard (NTSC starts with a
 // long line, 228 colour clocks), before the chipset runs; the image's first
 // line too (DisplayLayout.h).
-void dmaVideoStandardInit(void) {
+void dmaVideoStandardInit(int shown_rows) {
+#if OMEGA_DYNAMIC_FIRST_LINE
+    directShownRows = shown_rows;
+    directShownFirst = (256 - shown_rows) / 2;
+#endif
     lineLast = OMEGA_VIDEO_LONG_LINES ? SLOT_LAST : SLOT_LAST - 1;
 #if OMEGA_DYNAMIC_FIRST_LINE
     omegaDirectFirstLine = wantFirst = DIRECT_FIRST_LINE_STD;

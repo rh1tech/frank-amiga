@@ -64,7 +64,7 @@ void parWrote(void);
 int dmaBlitWaitRemaining(void);
 int dmaBlitterFree(void);
 
-void dmaVideoStandardInit(void);
+void dmaVideoStandardInit(int shown_rows);   // image rows the display shows: 240 or 256
 void evenCycle(void);
 void oddCycle(void);
 void dramCycle(void);

@@ -15,6 +15,8 @@
  *                                   (Right Ctrl/Alt fire), numpad (0 . fire)
  *   meter=on                        performance meter (EMU ms, FPS) shown
  *   video=ntsc                      NTSC machine (60 Hz, 263 lines); default pal
+ *   display=480                     PAL on 640x480 (240 rows shown) for displays
+ *                                   that refuse 640x512
  * Uploads go over the link (link_proto.h LINK_OP_UPLOAD_*) with the stream
  * paused; BOOT then makes the slave restart from them.
  */
@@ -178,6 +180,7 @@ bool media_load_config(void) {
         else if (!strcmp(k, "joykeys")) media_config.joykeys = usb_amiga_joykeys_parse(v);
         else if (!strcmp(k, "meter")) media_config.meter = !strcmp(v, "on") || !strcmp(v, "1");
         else if (!strcmp(k, "video")) media_config.ntsc = !strcasecmp(v, "ntsc");
+        else if (!strcmp(k, "display")) media_config.display480 = atoi(v) == 480;
     }
     f_close(&f);
     if (media_config.df1[0]) media_config.drive1 = true;
@@ -205,6 +208,7 @@ bool media_save_ini(void) {
     f_printf(&f, "joykeys=%s\n", usb_amiga_joykeys_name(media_config.joykeys));
     if (media_config.meter) f_printf(&f, "meter=on\n");
     if (media_config.ntsc) f_printf(&f, "video=ntsc\n");
+    if (media_config.display480) f_printf(&f, "display=480\n");
     const bool ok = f_close(&f) == FR_OK;
     printf("media: %s %s\n", INI_PATH, ok ? "saved" : "NOT saved");
     return ok;
@@ -220,6 +224,7 @@ bool media_boot(void) {
     const uint32_t slow = media_config.slow_kb == 0 ? 1u : media_config.slow_kb >= 1024 ? 2u : 0u;
     flags |= chip << LINK_BOOT_CHIP_SHIFT | slow << LINK_BOOT_SLOW_SHIFT;
     if (media_config.ntsc) flags |= LINK_BOOT_NTSC;
+    else if (!media_config.display480) flags |= LINK_BOOT_ROWS256;
     for (int d = 0; d < 2 && ok; d++) {
         const char *path = d ? media_config.df1 : media_config.df0;
         scp_close(&scp[d]);

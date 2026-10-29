@@ -53,6 +53,11 @@ static const mode_t modes[] = {
      * PAL frames land one per refresh (25.2 MHz / (800 x 630) = 50.0 Hz). */
     [VIDEO_640x480p50] = { "640x480p50", 640, 480, 16, 96, 48, 10, 2, 138, 252000, 0, true },
     [VIDEO_640x480p60] = { "640x480p60", 640, 480, 16, 96, 48, 10, 2, 33, 252000, 1, true },
+    /* frank-amiga: the PAL image's 256 rows whole (overscan screens such as
+     * SWOS's menus reach below 640x480's 240): the same clock and 630-line
+     * frame, 512 of them active. Not a CEA format; monitors take it, a TV
+     * may not (display=480 in the ini falls back). */
+    [VIDEO_640x512p50] = { "640x512p50", 640, 512, 16, 96, 48, 10, 2, 106, 252000, 0, true },
 };
 
 #define TMDS_CTRL_00 0x354u

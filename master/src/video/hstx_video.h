@@ -14,6 +14,7 @@
 typedef enum {
     VIDEO_640x480p50,   /* VGA timing, long vertical blank: PAL rate */
     VIDEO_640x480p60,   /* VGA (CEA VIC 1) */
+    VIDEO_640x512p50,   /* 25.2 MHz too, 630 lines: all 256 PAL rows at 2x */
     VIDEO_MODE_COUNT,
 } video_mode_t;
 

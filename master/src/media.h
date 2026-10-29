@@ -16,6 +16,7 @@ typedef struct {
     uint8_t joykeys;            /* usb_amiga.h JOYKEYS_* */
     bool meter;                 /* performance meter shown (osd.h) */
     bool ntsc;                  /* NTSC machine (60 Hz), else PAL */
+    bool display480;            /* PAL on 640x480 (240 rows) instead of 640x512 */
     uint16_t chip_kb, slow_kb;  /* 512/1024/2048, 0/512/1024 */
 } media_config_t;
 extern media_config_t media_config;

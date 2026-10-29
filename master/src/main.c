@@ -170,7 +170,8 @@ static void amiga_start(void) {
     /* The machine's standard picks the display's rate (the emulation is
      * paced by it): PAL 50 Hz, NTSC 60 Hz. Fixed from boot. */
     omegaVideoNtsc = media_config.ntsc;
-    if (!video_init(omegaVideoNtsc ? VIDEO_640x480p60 : VIDEO_640x480p50,
+    if (!video_init(omegaVideoNtsc ? VIDEO_640x480p60
+                    : media_config.display480 ? VIDEO_640x480p50 : VIDEO_640x512p50,
                     denise_row, denise_frame_start)) {
         printf("amiga: video init failed\n");
         return;
