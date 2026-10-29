@@ -982,6 +982,18 @@ static void dmaUpdateLineState(void) {
         // hiresDisplayPrefetch() without changing its stride.
         bitplaneLine.lastCycle = chipset.ddfstop +
             omegaDdfHiresFetchTail(chipset.ddfstrt, chipset.ddfstop);
+        // frank-amiga: a DDFSTOP in the middle of an 8-slot fetch unit
+        // fetches through that unit and one more (the 0x3c/0xd0 case
+        // above, 40 words). Monkey Island's 0x38/0xcc screen got 39 words a
+        // line from the fixed tail, so its 80-byte rows sheared 16 pixels a
+        // line.
+        {
+            const int span = (int)chipset.ddfstop - (int)chipset.ddfstrt;
+            if (span > 0 && (span & 7) == 4) {
+                const int last = chipset.ddfstrt + 8 * (span / 8 + 2) - 1;
+                bitplaneLine.lastCycle = last > 0xDF ? 0xDF : last;
+            }
+        }
     }else{
         // LORES: one word per plane every 8 slots (plane 1 last, at +7),
         // in groups from DDFSTRT (the tables' phase) through the group
