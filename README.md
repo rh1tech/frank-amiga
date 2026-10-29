@@ -36,8 +36,9 @@ card's test set on the board and reports fps, last PC and hang/reset flags
                             chip=512                       chip RAM KB: 512 | 1024 | 2048
                             slow=512                       slow RAM KB at $C00000: 0 | 512 | 1024
 /amiga/kick/                Kickstart images (your own licensed copies, or AROS)
-/amiga/adf/                 disk images: .adf, and .scp flux images (copy protections
-                            such as Rob Northen Copylock work from these)
+/amiga/adf/                 disk images: .adf, .scp flux images and .ipf (SPS/CAPS)
+                            images (copy protections such as Rob Northen Copylock
+                            work from the last two)
 ```
 
 At power-on the master uploads the configured ROMs and disks to the slave and
@@ -47,7 +48,7 @@ into the ADF file on the card about a second later.
 ## Controls
 
 - USB keyboard and mouse on the master's USB port. F11 opens the file
-  manager: walk the card, put a disk image (.adf/.scp, marked `*`) into DF0
+  manager: walk the card, put a disk image (.adf/.scp/.ipf, marked `*`) into DF0
   or DF1 or boot from it, pick a Kickstart (`K`), and optionally make the
   choice the power-on one (written to frank-amiga.ini). F12 opens the menu:
   DF0/DF1 disk browser, Kickstart, reset, save/load state, volume, keyboard

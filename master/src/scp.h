@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include "ff.h"
+#include "ipf.h"
 
 #define SCP_TRACKS 168
 
@@ -20,6 +21,7 @@ typedef struct {
     uint32_t ticks_ns;             /* flux time unit */
     DWORD clmt[64];                /* FatFs fast-seek cluster map */
     int bg_track;                  /* background decode (-1: none) */
+    ipf_t *ipf;                    /* an .ipf image instead (ipf.c): its index */
     uint32_t bg_at, bg_len, bg_got;
 } scp_t;
 
@@ -35,7 +37,9 @@ typedef struct {
     uint16_t ns[SCP_CELL_BLOCKS];
 } scp_cells_t;
 
-bool scp_open(scp_t *s, const char *path);
+/* Opens an .scp or an .ipf (by its contents); `ipf_index` is where an
+ * .ipf's track index may go (master PSRAM). */
+bool scp_open(scp_t *s, const char *path, ipf_t *ipf_index);
 void scp_close(scp_t *s);
 /* Track `track` (cylinder * 2 + side) as MFM bytes in `out` (at most `cap`),
  * its first sync word-aligned; returns the bytes (a multiple of 4), 0 if

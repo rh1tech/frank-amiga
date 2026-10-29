@@ -30,6 +30,7 @@ add_executable(frank-amiga-master
     src/input.c
     src/media.c
     src/scp.c
+    src/ipf.c
     src/osd.c
     src/usb_amiga.c
     src/denise/denise_c1.c

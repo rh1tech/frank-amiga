@@ -83,10 +83,15 @@ static void cache_reset(int d) {
     bg_next[d] = 0;
 }
 
+/* Images whose tracks the master builds as the slave's drive asks: .scp
+ * flux and .ipf (scp.c, ipf.c). */
 static bool is_scp(const char *path) {
     const size_t n = strlen(path);
-    return n > 4 && !strcasecmp(path + n - 4, ".scp");
+    return n > 4 && (!strcasecmp(path + n - 4, ".scp") || !strcasecmp(path + n - 4, ".ipf"));
 }
+
+/* An .ipf's track index, per drive (master PSRAM, free 0x120000..0x16FFFF). */
+#define IPF_INDEX(d) ((ipf_t *)(0x11000000u + 0x120000u + (uint32_t)(d) * 0x8000u))
 
 bool media_upload(uint32_t target, const char *path) {
     if (!media_mount()) return false;
@@ -216,7 +221,7 @@ bool media_boot(void) {
         cache_reset(d);
         if (!path[0]) continue;
         if (is_scp(path)) {
-            if (scp_open(&scp[d], path) || (media_remount() && scp_open(&scp[d], path)))
+            if (scp_open(&scp[d], path, IPF_INDEX(d)) || (media_remount() && scp_open(&scp[d], path, IPF_INDEX(d))))
                 flags |= d ? LINK_BOOT_DF1_EXT : LINK_BOOT_DF0_EXT;
         } else if (media_upload(d ? LINK_UP_DF1 : LINK_UP_DF0, path)) {
             flags |= d ? LINK_BOOT_DF1_DISK : LINK_BOOT_DF0_DISK;
@@ -233,8 +238,8 @@ bool media_insert(int drive, const char *path) {
         char p[256];
         prefix_path(p, sizeof p, path);
         cache_reset(drive);
-        if (!scp_open(&scp[drive], p) && !(media_remount() && scp_open(&scp[drive], p))) {
-            printf("media: %s is not an SCP image\n", p);
+        if (!scp_open(&scp[drive], p, IPF_INDEX(drive)) && !(media_remount() && scp_open(&scp[drive], p, IPF_INDEX(drive)))) {
+            printf("media: %s is not an SCP/IPF image\n", p);
             return false;
         }
         stream_stop();

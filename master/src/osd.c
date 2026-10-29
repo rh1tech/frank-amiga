@@ -9,7 +9,7 @@
  * the Amiga gets no keyboard or mouse input.
  *
  * The file manager (F11) walks the card from /amiga: a disk image (.adf,
- * .scp) goes into DF0 or DF1 or boots, a Kickstart (256/512 KB file) is
+ * .scp, .ipf) goes into DF0 or DF1 or boots, a Kickstart (256/512 KB file) is
  * used, each optionally saved to frank-amiga.ini as the power-on choice.
  */
 #include "osd.h"
@@ -214,7 +214,7 @@ static void fm_scan(void) {
         if (fi.fattrib & AM_HID || fi.fname[0] == '.') continue;
         char type = E_OTHER;
         if (fi.fattrib & AM_DIR) type = E_DIR;
-        else if (ends_with(fi.fname, ".adf") || ends_with(fi.fname, ".scp")) type = E_DISK;
+        else if (ends_with(fi.fname, ".adf") || ends_with(fi.fname, ".scp") || ends_with(fi.fname, ".ipf")) type = E_DISK;
         else if (fi.fsize == 262144u || fi.fsize == 524288u) type = E_KICK;
         snprintf(files[nfiles++], NAME_MAX_REC, "%c%s", type, fi.fname);
     }

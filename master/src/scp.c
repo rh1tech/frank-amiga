@@ -20,12 +20,34 @@ static uint32_t le32(const uint8_t *p) {
     return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
 
-bool scp_open(scp_t *s, const char *path) {
+static bool scp_has(const scp_t *s, int track) {
+    if (s->ipf) return ipf_has(s->ipf, track);
+    return track >= 0 && track < SCP_TRACKS && s->offset[track];
+}
+
+bool scp_open(scp_t *s, const char *path, ipf_t *ipf_index) {
     scp_close(s);
     if (f_open(&s->f, path, FA_READ) != FR_OK) return false;
     uint8_t hdr[16];
     UINT got = 0;
-    if (f_read(&s->f, hdr, sizeof hdr, &got) != FR_OK || got != sizeof hdr ||
+    s->ipf = NULL;
+    if (f_read(&s->f, hdr, 4, &got) == FR_OK && got == 4 && !memcmp(hdr, "CAPS", 4)) {
+        /* An .ipf: its records indexed once, tracks built from them. */
+        s->clmt[0] = sizeof s->clmt / sizeof s->clmt[0];
+        s->f.cltbl = s->clmt;
+        if (f_lseek(&s->f, CREATE_LINKMAP) != FR_OK) s->f.cltbl = NULL;
+        if (!ipf_index || !ipf_index_read(ipf_index, &s->f)) {
+            f_close(&s->f);
+            return false;
+        }
+        for (int t = 0; t < SCP_TRACKS; t++) s->offset[t] = ipf_has(ipf_index, t) ? 1u : 0u;
+        s->ipf = ipf_index;
+        s->bg_track = -1;
+        s->open = true;
+        return true;
+    }
+    if (f_lseek(&s->f, 0) != FR_OK ||
+        f_read(&s->f, hdr, sizeof hdr, &got) != FR_OK || got != sizeof hdr ||
         memcmp(hdr, "SCP", 3) != 0 ||
         f_read(&s->f, s->offset, sizeof s->offset, &got) != FR_OK || got != sizeof s->offset) {
         f_close(&s->f);
@@ -131,9 +153,25 @@ static uint32_t flux_to_mfm(const scp_t *s, const uint8_t *flux, uint32_t len,
     return o;
 }
 
+/* An .ipf track from its DATA bytes. */
+static uint32_t ipf_to_mfm(scp_t *s, int track, const uint8_t *data, uint8_t *out,
+                           uint32_t cap, scp_cells_t *cells) {
+    return ipf_track(s->ipf, track, data, out, cap, cells->ns, &cells->n, &cells->spread);
+}
+
 uint32_t scp_track(scp_t *s, int track, uint8_t *out, uint32_t cap, scp_cells_t *cells) {
     uint32_t at, len;
     UINT got = 0;
+    if (s->ipf) {
+        cells->n = 0;
+        if (!scp_has(s, track)) return 0;
+        len = ipf_data(s->ipf, track, &at);
+        if (len > SCP_FLUX_CAP) return 0;
+        if (len && (f_lseek(&s->f, at) != FR_OK || f_read(&s->f, flux_now, len, &got) != FR_OK ||
+                    got != len))
+            return 0;
+        return ipf_to_mfm(s, track, flux_now, out, cap, cells);
+    }
     if (!track_flux(s, track, &at, &len) || f_lseek(&s->f, at) != FR_OK ||
         f_read(&s->f, flux_now, len, &got) != FR_OK)
         return 0;
@@ -142,7 +180,13 @@ uint32_t scp_track(scp_t *s, int track, uint8_t *out, uint32_t cap, scp_cells_t 
 
 bool scp_bg_start(scp_t *s, int track) {
     uint32_t at, len;
-    if (!track_flux(s, track, &at, &len)) return false;
+    if (s->ipf) {
+        if (!scp_has(s, track)) return false;
+        len = ipf_data(s->ipf, track, &at);
+        if (len > SCP_FLUX_CAP) return false;
+    } else if (!track_flux(s, track, &at, &len)) {
+        return false;
+    }
     s->bg_track = track;
     s->bg_at = at;
     s->bg_len = len;
@@ -164,7 +208,9 @@ uint32_t scp_bg_step(scp_t *s, uint32_t slice, uint8_t *out, uint32_t cap, scp_c
         s->bg_got += got;
         return 0;
     }
+    const int track = s->bg_track;
     s->bg_track = -1;
+    if (s->ipf) return ipf_to_mfm(s, track, flux_bg, out, cap, cells);
     return flux_to_mfm(s, flux_bg, s->bg_len, out, cap, cells);
 }
 
@@ -172,6 +218,7 @@ uint32_t scp_bg_step(scp_t *s, uint32_t slice, uint8_t *out, uint32_t cap, scp_c
  * flux) into `dst`; returns the bytes (0: none, or more than `cap`). */
 uint32_t scp_raw_track(scp_t *s, int track, uint8_t *dst, uint32_t cap) {
     uint32_t at, len;
+    if (s->ipf) return 0;
     UINT got = 0;
     if (!track_flux(s, track, &at, &len) || 16u + len > cap) return 0;
     if (f_lseek(&s->f, s->offset[track]) != FR_OK || f_read(&s->f, dst, 16, &got) != FR_OK || got != 16)
