@@ -2700,6 +2700,21 @@ int dmaBlitWaitRemaining(void) {
     return rem > 0 ? (int)rem : 0;
 }
 
+// frank-amiga: where the next slot runs, for the CPU's core to work out
+// VPOSR/VHPOSR at its own time (slave link_pump.c parBeamRead()). pos is
+// vPos << 16 | hPos; info the line's last slot << 16 | the frame's first
+// line past its end; hi VPOSR's top bits (LOF, chip ID). 0 if the lines
+// alternate in length (NTSC), which the reader does not follow.
+int dmaBeamNext(uint32_t *pos, uint32_t *info, uint32_t *hi) {
+    if (OMEGA_VIDEO_LONG_LINES)
+        return 0;
+    *pos = (uint32_t)internal.vPos << 16 | (uint32_t)internal.hPos;
+    *info = (uint32_t)lineLast << 16 |
+            (uint32_t)(OMEGA_VIDEO_FRAME_LINES - (internal.LOF ? 0 : 1));
+    *hi = (uint32_t)(internal.LOF << 15) | OMEGA_VIDEO_VPOSR_ID;
+    return 1;
+}
+
 int dmaBlitterFree(void) {
     return blitterState == 3 ||
            (blitterState == 0 && !(chipset.dmaconr & 0x4000));

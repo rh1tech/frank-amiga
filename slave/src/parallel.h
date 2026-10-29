@@ -56,6 +56,10 @@ void parSync(void);
  * what the blitter is doing, for parSkipSync() (link_pump.c). */
 void par_publish_blit(uint32_t slot);
 
+/* Core 1: VPOSR and VHPOSR at the CPU's current slot, from the beam core 0
+ * last published, without waiting for it; false if it must sync. */
+int parBeamRead(uint32_t *vposr, uint32_t *vhposr);
+
 #ifdef FRANK_PROF
 /* Profiling (DWT cycles, each core its own counter): where the cores'
  * time goes; main.c prints them per frame. */

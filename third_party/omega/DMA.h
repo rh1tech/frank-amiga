@@ -15,6 +15,8 @@
 #ifndef DMA_h
 #define DMA_h
 
+#include <stdint.h>
+
 #include <stdio.h>
 
 void dma_execute();
@@ -51,6 +53,8 @@ void parSync(void);
 // shortcuts invalid until the chipset has run on (parWrote()).
 int parSkipSync(int write, unsigned reg);
 void parWrote(void);
+// VPOSR/VHPOSR at the CPU's slot without waiting (slave link_pump.c).
+int parBeamRead(uint32_t *vposr, uint32_t *vhposr);
 #define DMA_CATCH_UP_REG(write, reg) do { \
         if (!parSkipSync((write), (reg))) { parSync(); if (write) parWrote(); } \
     } while (0)
@@ -63,6 +67,8 @@ void parWrote(void);
 // registers may be written without effect on a blit).
 int dmaBlitWaitRemaining(void);
 int dmaBlitterFree(void);
+// frank-amiga: the beam at the next slot (see DMA.c); 0 if not followable.
+int dmaBeamNext(uint32_t *pos, uint32_t *info, uint32_t *hi);
 
 void dmaVideoStandardInit(int shown_rows);   // image rows the display shows: 240 or 256
 void evenCycle(void);

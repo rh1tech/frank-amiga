@@ -293,11 +293,71 @@ void __not_in_flash_func(parSync)(void) {
 volatile uint32_t par_blit_until;        /* CPU slot BBUSY stays set before */
 volatile bool par_blit_wait, par_blit_free;
 
+/* The beam where the chipset's next slot runs, published with the blitter
+ * state: VPOSR/VHPOSR at the CPU's own slot follow from it, so a beam-
+ * polling loop need not hand off to the chipset at every read (Mind Riot's
+ * "m" part: ~4800 a frame, 42 fps). An odd sequence count marks a snapshot
+ * being written; info 0, none usable. */
+static volatile uint32_t par_beam_seq, par_beam_slot, par_beam_pos,
+                         par_beam_info, par_beam_hi;
+
 void par_publish_blit(uint32_t slot) {
     const int rem = dmaBlitWaitRemaining();
     par_blit_until = slot + (uint32_t)rem;
     par_blit_wait = rem > 0;
     par_blit_free = dmaBlitterFree() != 0;
+    uint32_t pos, info, hi;
+    const int ok = dmaBeamNext(&pos, &info, &hi);
+    par_beam_seq++;
+    __dmb();
+    par_beam_slot = slot;
+    par_beam_pos = pos;
+    par_beam_info = ok ? info : 0u;
+    par_beam_hi = hi;
+    __dmb();
+    par_beam_seq++;
+}
+
+/* A synced register read sees the chipset after its slot t - 1 ran: the beam
+ * of that slot (dma_run() leaves VHPOSR there, VPOSR at its line). Worked out
+ * here from the snapshot, unless that slot lies in another frame or before
+ * the snapshot's line. */
+int __not_in_flash_func(parBeamRead)(uint32_t *vposr, uint32_t *vhposr) {
+    if (!par_running || !par_on_cpu_core())
+        return 0;
+    const uint32_t s = par_beam_seq;
+    __dmb();
+    if (s & 1u)
+        return 0;
+    const uint32_t slot = par_beam_slot, pos = par_beam_pos;
+    const uint32_t info = par_beam_info, hi = par_beam_hi;
+    __dmb();
+    if (par_beam_seq != s || !info)
+        return 0;
+    const uint32_t t = par_cpu_base + ((par_cpu_odd + (uint32_t)m68k_cycles_run()) >> PAR_CPU_SHIFT);
+    const int32_t d = (int32_t)(t - 1u - slot);
+    int v = (int)(pos >> 16), h = (int)(pos & 0xFFFFu);
+    const int last = (int)(info >> 16), vend = (int)(info & 0xFFFFu);
+    if (d < -1 || d > 1024)
+        return 0;
+    if (d < 0) {
+        if (h == 0)
+            return 0;
+        h--;
+    } else {
+        h += d;
+        while (h > last) {
+            h -= last + 1;
+            if (++v >= vend)
+                return 0;
+        }
+    }
+    __dmb();
+    if ((int32_t)(t - par_cpu_slot) > 0)
+        par_cpu_slot = t;
+    *vposr = hi | (uint32_t)(v >> 8);
+    *vhposr = (uint32_t)((v << 8 | h) & 0xFFFF);
+    return 1;
 }
 
 void __not_in_flash_func(parWrote)(void) {
@@ -305,6 +365,7 @@ void __not_in_flash_func(parWrote)(void) {
         return;
     par_blit_wait = false;
     par_blit_free = false;
+    par_beam_info = 0;      /* a write may move the beam (VPOSW's LOF) */
     __dmb();
 }
 

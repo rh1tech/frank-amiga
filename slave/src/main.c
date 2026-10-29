@@ -426,6 +426,13 @@ static void __not_in_flash_func(emulation_loop)(void) {
                        (unsigned long)(prof_c1_cpu / fr / 1000u), (unsigned long)(prof_c1_sync / fr / 1000u),
                        (unsigned long)(prof_c1_syncs / fr), (unsigned long)(prof_c1_lead / fr / 1000u),
                        (unsigned long)(prof_c1_pump / fr / 1000u));
+#ifdef FRANK_BEAM_CHECK
+                {
+                    extern volatile uint32_t beam_fast, beam_bad, beam_bad_last;
+                    printf("beam fast %lu bad %lu last %08lx\n", (unsigned long)beam_fast,
+                           (unsigned long)beam_bad, (unsigned long)beam_bad_last);
+                }
+#endif
                 evq_w0 = host_evq_waits;
                 evq_u0 = host_evq_wait_us;
                 prof_c0_dma = prof_c0_wait_cpu = 0;

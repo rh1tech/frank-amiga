@@ -150,6 +150,33 @@ static inline uint32_t custom_mirror(uint32_t address) {
     return 0xDFF000u | (address & 0x1FFu);
 }
 
+
+// ── Beam position reads (VPOSR, VHPOSR) ──────────────────────────────────
+// With the chipset on the other core, the CPU works the beam out from its
+// own time (parBeamRead()) instead of waiting for the chipset at each read
+// of a beam-polling loop.
+#ifdef FRANK_BEAM_CHECK
+volatile uint32_t beam_fast, beam_bad, beam_bad_last;
+#endif
+static inline int beam_read(uint32_t *vp, uint32_t *vh) {
+#ifdef FRANK_PARALLEL
+    if (!parBeamRead(vp, vh))
+        return 0;
+#ifdef FRANK_BEAM_CHECK
+    parSync();
+    beam_fast++;
+    if (*vp != chipset.vposr || *vh != chipset.vhposr) {
+        beam_bad++;
+        beam_bad_last = *vh << 16 | chipset.vhposr;
+    }
+#endif
+    return 1;
+#else
+    (void)vp; (void)vh;
+    return 0;
+#endif
+}
+
 // ── chipReadByte ──────────────────────────────────────────────────────────
 unsigned int chipReadByte(unsigned int address) {
     // Chip RAM is by far the most common target; test it first.
@@ -166,6 +193,13 @@ unsigned int chipReadByte(unsigned int address) {
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
         uint32_t off = address & 0x1FFu;
+        if (off - 4u < 4u) {
+            uint32_t vp, vh;
+            if (beam_read(&vp, &vh)) {
+                const uint32_t w = off < 6u ? vp : vh;
+                return (off & 1u) ? (w & 0xFFu) : (w >> 8);
+            }
+        }
         DMA_CATCH_UP_REG(0, off >> 1);
         debugChipAddress = off;
         if (off >= 32u) return 0;
@@ -201,6 +235,11 @@ unsigned int chipReadWord(unsigned int address) {
     // Custom chipset registers
     if (address > 0xDFEFFFu) {
         uint32_t off = (address & 0x1FFu) >> 1;
+        if (off - 2u < 2u) {
+            uint32_t vp, vh;
+            if (beam_read(&vp, &vh))
+                return off == 2u ? vp : vh;
+        }
         DMA_CATCH_UP_REG(0, off);
         // Only a handful of registers are readable; DeniseID is the fallback
         if (off > 16) {
@@ -245,6 +284,11 @@ unsigned int chipReadLong(unsigned int address) {
         return ram_read_long(&ext_rom_base[address - 0xE00000u]);
     // Custom chipset registers (32-bit = two 16-bit reads)
     if (address > 0xDFEFFFu) {
+        if ((address & 0x1FFu) == 4u) {
+            uint32_t vp, vh;
+            if (beam_read(&vp, &vh))
+                return vp << 16 | vh;
+        }
         DMA_CATCH_UP();
         uint32_t off = (address & 0x1FFu) >> 1;
         // getChipReg32 covers only the first 16 registers; everything else
