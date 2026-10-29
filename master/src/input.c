@@ -9,6 +9,7 @@
  * which is how the bench drives the machine) and USB HID.
  */
 #include "input.h"
+#include "pico/stdlib.h"
 
 #include <ctype.h>
 #include <string.h>
@@ -95,18 +96,37 @@ bool input_type(const char *s) {
     return true;
 }
 
+/* Typed text goes in at a typist's pace: each key held ~100 ms, ~150 ms
+ * apart (about 4 a second). Faster, games that look at their last key
+ * only now and then (Speedball 2's code entry) lost keys: each one
+ * replaced the one before it unread. */
+#define TYPE_HOLD_US 100000u
+#define TYPE_GAP_US  150000u
+
 void input_poll(void) {
-    /* One character (up to four key events) at a time, so a request never
-     * splits one. */
+    static int phase;                 /* 0: press next, 1: held, 2: gap */
+    static uint64_t at;
+    static uint8_t code;
+    static bool shift;
+    const uint64_t now = time_us_64();
+    if (phase && now < at) return;
+    if (phase == 1) {                 /* release */
+        if (!input_key(code, true)) return;
+        if (shift && !input_key(AK_LSHIFT, true)) return;
+        text_tail++;
+        phase = 2;
+        at = now + TYPE_GAP_US;
+        return;
+    }
+    phase = 0;
     while (text_tail != text_head) {
-        uint8_t code;
-        bool shift;
         const char ch = text_q[text_tail % sizeof text_q];
         if (!input_ascii_to_amiga(ch, &code, &shift)) { text_tail++; continue; }
         if (shift && !input_key(AK_LSHIFT, false)) return;
-        if (!input_key(code, false) || !input_key(code, true)) return;
-        if (shift && !input_key(AK_LSHIFT, true)) return;
-        text_tail++;
+        if (!input_key(code, false)) return;
+        phase = 1;
+        at = now + TYPE_HOLD_US;
+        return;
     }
 }
 

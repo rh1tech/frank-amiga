@@ -12,6 +12,8 @@
 #include <string.h>
 
 #include "pico/stdlib.h"
+#include "hardware/irq.h"
+#include "hardware/uart.h"
 
 #define LINE_MAX 256
 #define ARGS_MAX 12
@@ -53,21 +55,38 @@ static void run_line(const console_cmd_t *cmds, char *line) {
     printf("ERR unknown command '%s'\n", argv[0]);
 }
 
-static char rx_buf[256];
-static uint32_t rx_head, rx_tail;
+/* Received characters: the UART's receive interrupt moves them here at
+ * once (its FIFO holds 32, under 3 ms at 115200; the main loop can be
+ * busier than that, decoding a disk track, and long commands lost
+ * characters). */
+static volatile char rx_buf[1024];
+static volatile uint32_t rx_head, rx_tail;
+
+static void rx_isr(void) {
+    while (uart_is_readable(uart0)) {
+        const char ch = (char)uart_getc(uart0);
+        if (rx_head - rx_tail < sizeof rx_buf)
+            rx_buf[rx_head++ % sizeof rx_buf] = ch;
+    }
+}
 
 void console_rx_poll(void) {
-    int ch;
-    while (rx_head - rx_tail < sizeof rx_buf &&
-           (ch = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT)
-        rx_buf[rx_head++ % sizeof rx_buf] = (char)ch;
+    static bool armed;
+    if (armed) return;
+    armed = true;
+    irq_set_exclusive_handler(UART0_IRQ, rx_isr);
+    irq_set_enabled(UART0_IRQ, true);
+    uart_set_irq_enables(uart0, true, false);
 }
 
 static int console_getc(uint32_t timeout_us) {
     console_rx_poll();
-    if (rx_head != rx_tail)
-        return (unsigned char)rx_buf[rx_tail++ % sizeof rx_buf];
-    return getchar_timeout_us(timeout_us);
+    const uint64_t until = time_us_64() + timeout_us;
+    do {
+        if (rx_head != rx_tail)
+            return (unsigned char)rx_buf[rx_tail++ % sizeof rx_buf];
+    } while (time_us_64() < until);
+    return PICO_ERROR_TIMEOUT;
 }
 
 void console_run(const console_cmd_t *cmds, void (*idle)(void)) {
