@@ -216,10 +216,8 @@ unsigned int chipReadWord(unsigned int address) {
     // Custom register mirror (no slow RAM)
     if (address > 0xBFFFFFu)
         return in_custom_mirror(address) ? chipReadWord(custom_mirror(address)) : 0;
-    // CIA A/B
-    if (address >= 0xBFD000u && address < 0xC00000u) DMA_CATCH_UP();
-    if (address >= 0xBFE001u) return CIARead(&CIAA, (address - 0xBFE001u) >> 8);
-    if (address >= 0xBFD000u) return CIARead(&CIAB, (address - 0xBFD000u) >> 8);
+    // CIA A/B: each chip on its half of the bus
+    if (address >= 0xBFD000u) { DMA_CATCH_UP(); return CIAReadWord(address); }
     // 24-bit expansion fast RAM (not present → open bus)
     if (address > 0x1FFFFFu) return 0;
     // Chip RAM
@@ -260,10 +258,11 @@ unsigned int chipReadLong(unsigned int address) {
     // Custom register mirror (no slow RAM)
     if (address > 0xBFFFFFu)
         return in_custom_mirror(address) ? chipReadLong(custom_mirror(address)) : 0;
-    // CIA A/B
-    if (address >= 0xBFD000u && address < 0xC00000u) DMA_CATCH_UP();
-    if (address >= 0xBFE001u) return CIARead(&CIAA, (address - 0xBFE001u) >> 8);
-    if (address >= 0xBFD000u) return CIARead(&CIAB, (address - 0xBFD000u) >> 8);
+    // CIA A/B: two word accesses
+    if (address >= 0xBFD000u) {
+        DMA_CATCH_UP();
+        return (uint32_t)CIAReadWord(address) << 16 | CIAReadWord(address + 2u);
+    }
     // 24-bit fast RAM
     if (address > 0x1FFFFFu) return 0;
     // Chip RAM
@@ -355,8 +354,8 @@ void chipWriteWord(unsigned int address, unsigned int value) {
             chipWriteWord(custom_mirror(address), value);
         return;
     }
-    // CIA: word writes to CIA space are no-ops (byte-wide chips)
-    if (address >= 0xBFD000u) return;
+    // CIA: each chip takes its half of the word
+    if (address >= 0xBFD000u) { DMA_CATCH_UP(); CIAWriteWord(address, (uint16_t)value); return; }
     // Chip RAM
     if (address > 0x1FFFFFu) return;
     address &= CHIPTOP;
@@ -397,8 +396,13 @@ void chipWriteLong(unsigned int address, unsigned int value) {
             chipWriteLong(custom_mirror(address), value);
         return;
     }
-    // CIA: no long writes
-    if (address >= 0xBFD000u) return;
+    // CIA: two word writes
+    if (address >= 0xBFD000u) {
+        DMA_CATCH_UP();
+        CIAWriteWord(address, (uint16_t)(value >> 16));
+        CIAWriteWord(address + 2u, (uint16_t)value);
+        return;
+    }
     // 24-bit fast RAM area (not present)
     if (address > 0x1FFFFFu) return;
     // Chip RAM

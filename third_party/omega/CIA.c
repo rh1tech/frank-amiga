@@ -370,3 +370,20 @@ void keyboardInt(){
     if (CIAA.icrMask & 0x08) CIAA.icr |= 0x80;
     ciaUpdateHorizon();
 }
+
+// frank-amiga: word accesses to CIA space, decoded as the A500 does: A8-A11
+// pick the register, CIA-A (A12 low) sits on D0-D7 and CIA-B (A13 low) on
+// D8-D15, so one word access reaches either chip or both. Gobliins 2's
+// keyboard server reads the key with move.w $BFEC00 (CIA-A SDR, low byte).
+uint16_t CIAReadWord(uint32_t address){
+    const int reg = (int)(address >> 8) & 0xF;
+    const uint8_t hi = (address & 0x2000u) ? 0xFFu : CIARead(&CIAB, reg);
+    const uint8_t lo = (address & 0x1000u) ? 0xFFu : CIARead(&CIAA, reg);
+    return (uint16_t)(hi << 8 | lo);
+}
+
+void CIAWriteWord(uint32_t address, uint16_t value){
+    const int reg = (int)(address >> 8) & 0xF;
+    if (!(address & 0x2000u)) CIAWrite(&CIAB, reg, (uint8_t)(value >> 8));
+    if (!(address & 0x1000u)) CIAWrite(&CIAA, reg, (uint8_t)value);
+}

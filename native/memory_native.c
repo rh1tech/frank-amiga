@@ -272,17 +272,10 @@ unsigned int chipReadWord(unsigned int address){
         return inCustomMirror(address) ? chipReadWord(customMirror(address)) : 0;
     }
     
-    if(address>=0xBFD000 && address<0xC00000) DMA_CATCH_UP();
-    //CIA A
-    if(address>=0xBFE001){
-        address = (address - 0xBFE001) >> 8;
-        return CIARead(&CIAA,address);
-    }
-    
-    //CIA B
+    //CIA A/B: each chip on its half of the bus (frank-amiga)
     if(address>=0xBFD000){
-        address = (address - 0xBFD000) >> 8;
-        return CIARead(&CIAB,address);
+        DMA_CATCH_UP();
+        return CIAReadWord(address);
     }
     
     //24bit fast ram
@@ -360,17 +353,10 @@ unsigned int chipReadLong(unsigned int address){
         return inCustomMirror(address) ? chipReadLong(customMirror(address)) : 0;
     }
     
-    if(address>=0xBFD000 && address<0xC00000) DMA_CATCH_UP();
-    //CIA A
-    if(address>=0xBFE001){
-        address = (address - 0xBFE001) >> 8;
-        return CIARead(&CIAA,address);
-    }
-    
-    //CIA B
+    //CIA A/B: two word accesses (frank-amiga)
     if(address>=0xBFD000){
-        address = (address - 0xBFD000) >> 8;
-        return CIARead(&CIAB,address);
+        DMA_CATCH_UP();
+        return (uint32_t)CIAReadWord(address) << 16 | CIAReadWord(address + 2);
     }
     
     //24bit fast ram
@@ -620,14 +606,10 @@ void chipWriteWord(unsigned int address,unsigned int value){
         return;
     }
     
-    if(address>=0xBFD000 && address<0xC00000) DMA_CATCH_UP();
-    //CIA A
-    if(address>=0xBFE001){
-        return;
-    }
-    
-    //CIA B
+    //CIA A/B: each chip takes its half of the word (frank-amiga)
     if(address>=0xBFD000){
+        DMA_CATCH_UP();
+        CIAWriteWord(address, (uint16_t)value);
         return;
     }
     
@@ -773,14 +755,11 @@ void chipWriteLong(unsigned int address,unsigned int value){
         return;
     }
     
-    if(address>=0xBFD000 && address<0xC00000) DMA_CATCH_UP();
-    //CIA A
-    if(address>=0xBFE001){
-        return;
-    }
-    
-    //CIA B
+    //CIA A/B: two word writes (frank-amiga)
     if(address>=0xBFD000){
+        DMA_CATCH_UP();
+        CIAWriteWord(address, (uint16_t)(value >> 16));
+        CIAWriteWord(address + 2, (uint16_t)value);
         return;
     }
     

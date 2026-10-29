@@ -51,6 +51,8 @@ extern int disass;
 void CIAInit(CIA_t*,uint16_t);    //reset the CIA and set INTREQ value;
 void CIAWrite(CIA_t*,int,uint8_t);//Data,byte address,data
 uint8_t CIARead(CIA_t*,int);      //Data,byteaddress
+uint16_t CIAReadWord(uint32_t address);           // frank-amiga: word access, both chips
+void CIAWriteWord(uint32_t address, uint16_t value);
 void CIAExecute(CIA_t*);      //returns INTREQ value if interupt, or 0 for nothing.
 
 // Batched E clock. Most ticks only count the running timers down, so
