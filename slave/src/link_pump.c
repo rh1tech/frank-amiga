@@ -255,7 +255,7 @@ static void __not_in_flash_func(par_wait_step)(void) {
 void __not_in_flash_func(parSync)(void) {
     if (!par_running || !par_on_cpu_core())
         return;
-    const uint32_t t = par_cpu_base + ((par_cpu_odd + (uint32_t)m68k_cycles_run()) >> 1);
+    const uint32_t t = par_cpu_base + ((par_cpu_odd + (uint32_t)m68k_cycles_run()) >> PAR_CPU_SHIFT);
     __dmb();
     if ((int32_t)(t - par_cpu_slot) > 0)
         par_cpu_slot = t;
@@ -322,7 +322,7 @@ int __not_in_flash_func(parSkipSync)(int write, unsigned reg) {
     } else if (reg != 1u || !par_blit_wait) {
         return 0;
     }
-    const uint32_t t = par_cpu_base + ((par_cpu_odd + (uint32_t)m68k_cycles_run()) >> 1);
+    const uint32_t t = par_cpu_base + ((par_cpu_odd + (uint32_t)m68k_cycles_run()) >> PAR_CPU_SHIFT);
     if (!write && (int32_t)(par_blit_until - t) <= 1)
         return 0;
     /* The CPU is at t: the chipset may run up to it meanwhile. */
@@ -346,7 +346,7 @@ static bool __not_in_flash_func(par_cpu_step)(void) {
         (int32_t)(par_dma_slot + PAR_LEAD_SLOTS - par_cpu_base);
     if (room <= 0)
         return false;
-    int budget = room * 2;
+    int budget = room << PAR_CPU_SHIFT;
     if (budget > PAR_CPU_CHUNK)
         budget = PAR_CPU_CHUNK;
     par_in_cpu = true;
@@ -355,8 +355,8 @@ static bool __not_in_flash_func(par_cpu_step)(void) {
 #endif
     {
         const uint32_t c = par_cpu_odd + (uint32_t)m68k_execute(budget);
-        par_cpu_base += c >> 1;
-        par_cpu_odd = c & 1u;
+        par_cpu_base += c >> PAR_CPU_SHIFT;
+        par_cpu_odd = c & ((1u << PAR_CPU_SHIFT) - 1u);
     }
 #ifdef FRANK_PROF
     prof_c1_cpu += PROF_CYC - c0;

@@ -742,8 +742,11 @@ static int __attribute__((noinline)) m68k_execute_running(int num_cycles)
 				{
 					extern uint32_t par_cpu_base, par_cpu_odd;
 					extern volatile uint32_t par_cpu_slot;
+#ifndef PAR_CPU_SHIFT
+#define PAR_CPU_SHIFT 1
+#endif
 					par_cpu_slot = par_cpu_base + ((par_cpu_odd +
-					                (uint32_t)(m68ki_initial_cycles - GET_CYCLES())) >> 1);
+					                (uint32_t)(m68ki_initial_cycles - GET_CYCLES())) >> PAR_CPU_SHIFT);
 				}
 #endif
 			}

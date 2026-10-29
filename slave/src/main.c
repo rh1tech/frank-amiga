@@ -505,6 +505,9 @@ int main(void) {
     if (ext) memory_set_ext_rom(ext);
 
     hostInit();
+#ifdef FRANK_A1200_TEST
+    cpu_select_68020(1);           /* A1200 CPU timing test */
+#endif
     cpu_init();
     ChipsetInit();
     for (int drive = 0; drive < 4; ++drive)

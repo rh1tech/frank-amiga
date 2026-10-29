@@ -33,6 +33,11 @@
 
 #define PAR_LEAD_SLOTS 128u    /* the CPU's lead over the chipset */
 #define PAR_CPU_CHUNK 96       /* CPU cycles per m68k_execute() call */
+/* CPU cycles per DMA slot as a shift: 1 = 2 cycles (7.09 MHz, A500),
+ * 2 = 4 cycles (14.19 MHz, A1200). */
+#ifndef PAR_CPU_SHIFT
+#define PAR_CPU_SHIFT 1
+#endif
 
 extern volatile uint32_t par_cpu_slot, par_dma_slot;
 extern volatile bool par_running;          /* core 1 runs the CPU */
