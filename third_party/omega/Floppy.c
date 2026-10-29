@@ -832,7 +832,12 @@ void floppyLineTick(void) {
         if (timedCreditNs > 128000) timedCreditNs = 128000;
         return;
     }
-    if ((chipset.dsklen & 0x8000) && floppyDataReady()) {
+    // frank-amiga: only a read that is running (as diskCycle() runs one:
+    // DMA on, DSKLEN armed with a length) makes the index pulses itself.
+    // DSKLEN $8000, length 0 (Lotus 2's loader, waiting for the index
+    // before it starts its read) left the drive with no index at all.
+    if ((chipset.dmaconr & 0x210) && (chipset.dsklen & 0x8000) &&
+        (chipset.dsklen & 0x3FFF) && floppyDataReady()) {
         return;
     }
     if (++lines >= 3125) {
