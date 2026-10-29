@@ -73,10 +73,15 @@ void CIACatchUp(void){
 }
 
 void CIAInit(CIA_t* cia,uint16_t paulaMask){
-    cia->ta  = 0;//65535;
-    cia->tb  = 0;//65535;
-    cia->taLatch = 0;
-    cia->tbLatch = 0;
+    // frank-amiga: the 8520's timer latches and counters come out of reset
+    // as $FFFF. With 0, a program that starts a timer and then writes TALO
+    // and TAHI got a period of TALO alone in between: Another World's music
+    // timer (CRA $81, TALO $54, TAHI $3D) fired every 85 E clocks, its
+    // handler outran the period and the 68000 never reached the TAHI write.
+    cia->ta  = 0xFFFF;
+    cia->tb  = 0xFFFF;
+    cia->taLatch = 0xFFFF;
+    cia->tbLatch = 0xFFFF;
     cia->tod = 0;
     cia->todAlarm = 0;
     cia->chipInt = paulaMask;
