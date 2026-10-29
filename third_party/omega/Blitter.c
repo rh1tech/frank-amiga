@@ -348,7 +348,13 @@ void blitter_execute(Chipset_t* chipset){
                             previousB = bdat;
                             const uint16_t d = mintermApply(&mk, channelA, channelB, cdat);
                             any |= d;
-                            if (pd) pd[x] = (uint16_t)(d << 8 | d >> 8);
+                            // A word that would not change is not written:
+                            // its PSRAM cache line stays clean, no write-back
+                            // (after pico-amiga's blitter).
+                            if (pd) {
+                                const uint16_t nd = (uint16_t)(d << 8 | d >> 8);
+                                if (pd[x] != nd) pd[x] = nd;
+                            }
                         }
                         if (any)
                             chipset->dmaconr = chipset->dmaconr & 0xDFFF; // clear zero flag
@@ -445,7 +451,8 @@ void blitter_execute(Chipset_t* chipset){
                     if(useMask & 1){
                         
                         channelD = channelD << 8 | channelD >>8;
-                        CHIPW(dpt) = channelD;
+                        if (CHIPW(dpt) != channelD)   // frank-amiga: see the fast row
+                            CHIPW(dpt) = channelD;
                         dpt +=xIncrement;
                     }
                     
