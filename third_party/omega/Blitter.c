@@ -310,7 +310,59 @@ void blitter_execute(Chipset_t* chipset){
             for(int y=0;y<sizev;++y){
 
                 int carry = fci;
-                
+
+                // frank-amiga: an ascending row without fill whose channels
+                // each stay inside one 64 KB chip RAM bank runs through
+                // direct pointers: no bank lookup or channel test per word,
+                // the zero flag tested once a row. Same words, same order
+                // (a channel reading what D wrote earlier in the row still
+                // sees it). HeroQuest's language screen: blitter ~55 % of
+                // the chipset's core.
+                if (xIncrement == 1 && !fillmode) {
+                    uint16_t *pa = NULL, *pb = NULL, *pc = NULL, *pd = NULL;
+                    int fast = 1;
+#define BLT_ROW_PTR(en, wpt, ptr) \
+                    if (fast && (useMask & (en))) { \
+                        const uint32_t b0 = (uint32_t)(wpt) << 1; \
+                        const uint32_t b1 = b0 + 2u * (uint32_t)(sizeh - 1); \
+                        if ((b0 >> 16) != (b1 >> 16)) fast = 0; \
+                        else (ptr) = (uint16_t *)chip_ptr(b0); \
+                    }
+                    BLT_ROW_PTR(8, apt, pa)
+                    BLT_ROW_PTR(4, bpt, pb)
+                    BLT_ROW_PTR(2, cpt, pc)
+                    BLT_ROW_PTR(1, dpt, pd)
+#undef BLT_ROW_PTR
+                    if (fast) {
+                        uint16_t any = 0;
+                        for (int x = 0; x < sizeh; ++x) {
+                            if (pa) { const uint16_t w = pa[x]; adat = (uint16_t)(w << 8 | w >> 8); }
+                            if (pb) { const uint16_t w = pb[x]; bdat = (uint16_t)(w << 8 | w >> 8); }
+                            if (pc) { const uint16_t w = pc[x]; cdat = (uint16_t)(w << 8 | w >> 8); }
+                            uint16_t A = adat;
+                            if (x == 0) A &= afwm;
+                            if (x == lastHWord) A &= alwm;
+                            const uint16_t channelA = (uint16_t)((previousA << (16 - shiftA)) | (A >> shiftA));
+                            const uint16_t channelB = (uint16_t)((previousB << (16 - shiftB)) | (bdat >> shiftB));
+                            previousA = A;
+                            previousB = bdat;
+                            const uint16_t d = mintermApply(&mk, channelA, channelB, cdat);
+                            any |= d;
+                            if (pd) pd[x] = (uint16_t)(d << 8 | d >> 8);
+                        }
+                        if (any)
+                            chipset->dmaconr = chipset->dmaconr & 0xDFFF; // clear zero flag
+                        if (pa) apt += sizeh;
+                        if (pb) bpt += sizeh;
+                        if (pc) cpt += sizeh;
+                        if (pd) dpt += sizeh;
+                        apt += amod;
+                        bpt += bmod;
+                        cpt += cmod;
+                        dpt += dmod;
+                        continue;
+                    }
+                }
                 
                 for(int x=0;x<sizeh;++x){
                     uint16_t channelD = 0;
