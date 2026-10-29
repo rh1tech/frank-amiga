@@ -463,6 +463,19 @@ static int floppyEnsureTrackCached(int drive) {
     return 1;
 }
 
+// frank-amiga: a savestate was loaded. The drives' bookkeeping (which
+// track the buffer holds) came back with it, the buffer itself did not
+// (it is outside the saved ranges): every drive builds or asks for its
+// track afresh. Without this, an OS game's disk read after a load got
+// another track's data and trackdisk retried for ever.
+void floppyStateRestored(void) {
+    for (int d = 0; d < FLOPPY_DISK_DRIVES; d++) {
+        cached_cylinder[d] = -1;
+        cached_side[d] = -1;
+        ext_have[d] = ext_want[d] = -1;
+    }
+}
+
 // An empty drive's track: a sync word and nothing else.
 static void floppyEmptyTrack(int drive) {
     volatile uint32_t *track = (volatile uint32_t *)drive_track_cache(drive);

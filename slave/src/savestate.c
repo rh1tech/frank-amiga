@@ -99,6 +99,10 @@ static void load(void) {
     if (h.slow)
         memcpy(slow_ram, STATE_RAM + h.chip, h.slow);
     host_state_restored();
+    {
+        extern void floppyStateRestored(void);
+        floppyStateRestored();
+    }
     printf("state: loaded (saved at frame %lu)\n", (unsigned long)h.frame);
 }
 
