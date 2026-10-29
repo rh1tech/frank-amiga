@@ -18,7 +18,7 @@
  *
  * The track goes to the slave as the drive delivers it: from the index, the
  * first block at its start position, whole 32-bit words (the few cells
- * beyond go at the very end, where the write splice is), as .scp tracks do.
+ * beyond come off the end of the last gap, where the write splice is).
  * Noise (unformatted) tracks are random cells. Copylock densities slow
  * down / speed up the cells of the sectors with syncs $8914 / $8912 by 5 %,
  * sent as the slave's timed-track cell table.
@@ -217,6 +217,10 @@ uint32_t ipf_track(const ipf_t *p, int track, const uint8_t *d, uint8_t *out,
     uint32_t bits = tr->track_bits;
     if (bits > cap * 8u) bits = cap * 8u;
     const uint32_t o = (bits - bits % 32u) / 8u;
+    /* Whole 32-bit words: the cells beyond come off the end of the last
+     * block's gap, the track's write splice (cutting them at the index
+     * instead broke the sector that straddles it). */
+    bits = o * 8u;
     memset(out, 0, (bits + 7u) / 8u);
     if (!tr->blocks || !tr->data_len) {         /* noise: random cells */
         for (uint32_t i = 0; i < o; i += 4) {
