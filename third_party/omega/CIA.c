@@ -150,6 +150,12 @@ void CIAWrite(CIA_t* cia,int reg,uint8_t value){
         case 0x4:cia->taLatch = (cia->taLatch & 65280) | value;break;//talo
         case 0x5://tahi
             cia->taLatch = (cia->taLatch & 255)   | (value<<8);
+            // frank-amiga: with the timer stopped, a write here loads the
+            // counter in either mode (as vAmiga's CIA, after the 8520):
+            // Speedball 2's keyboard handshake starts a continuous timer
+            // after TALO/TAHI and waited out a stale counter instead.
+            if (!(cia->cra & 1))
+                cia->ta = cia->taLatch;
             
             if( (cia->cra & 8) == 8){ //in one shot mode a write here starts the timer
                  cia->ta  = cia->taLatch;
@@ -160,6 +166,8 @@ void CIAWrite(CIA_t* cia,int reg,uint8_t value){
         case 0x6:cia->tbLatch = (cia->tbLatch & 65280) | value;break;//tblo
         case 0x7://tbhi
             cia->tbLatch = (cia->tbLatch & 255)   | (value<<8);
+            if (!(cia->crb & 1))          // frank-amiga: as TAHI above
+                cia->tb = cia->tbLatch;
             
             if( (cia->crb & 8) == 8){ //in one shot mode a write here starts the timer
                 cia->tb  = cia->tbLatch;
