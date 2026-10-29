@@ -1799,6 +1799,13 @@ static int __attribute__((noinline)) dmaIdleCompute(int limit) {
     // Waiting. With the standard horizontal compare mask the masked beam
     // grows with hPos, so the wait completes at its horizontal position if
     // it completes on this line at all.
+    // frank-amiga: with no horizontal compare bits (Lemmings' WAITs: mask
+    // $FF00) the masked beam does not change along the line, so a wait not
+    // reached now is not reached before the next line - unless it also
+    // waits for the blitter (BFD clear), whose blit may end mid-line.
+    if ((internal.IR2 & 0xfe) == 0 &&
+        ((internal.IR2 & 0x8000u) || !(chipset.dmaconr & 0x4000u)))
+        return limit;
     if ((internal.IR2 & 0xfe) != 0xfe)
         return h;
     if (copperWaitNextBank && (internal.vPos & 0xff) == 0xff)
