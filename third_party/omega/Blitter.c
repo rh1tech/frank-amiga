@@ -158,6 +158,20 @@ static inline uint16_t mintermApply(const MintermMasks *k, uint16_t a,
     return (uint16_t)((a & a1) | ((uint16_t)~a & a0));
 }
 
+// frank-amiga: the B data register is shifted when BLTBDAT is written, by
+// BSH in the direction of DESC set then (as WinUAE's BLTBDAT); with B DMA
+// off every word of a blit takes that held value, without the shifter's
+// carry from the word before. Arte's logo zoom writes BLTBDAT=$FFFF after a
+// BSH of the column's offset: the held value masks the destination's left
+// pixels for all its one-word rows (carried, it masked the first row only).
+uint16_t blitterBHold;
+
+void blitterHoldB(uint16_t value){
+    const int shift = chipset.bltcon1 >> 12;
+    blitterBHold = (chipset.bltcon1 & 2) ? (uint16_t)(value << shift)
+                                         : (uint16_t)(value >> shift);
+}
+
 void blitter_execute(Chipset_t* chipset){
     
     //Blitter DMA Enabled and blitter busy flag set (which means bltsize was written to and blitting should start).
@@ -343,7 +357,8 @@ void blitter_execute(Chipset_t* chipset){
                             if (x == 0) A &= afwm;
                             if (x == lastHWord) A &= alwm;
                             const uint16_t channelA = (uint16_t)((previousA << (16 - shiftA)) | (A >> shiftA));
-                            const uint16_t channelB = (uint16_t)((previousB << (16 - shiftB)) | (bdat >> shiftB));
+                            const uint16_t channelB = pb ? (uint16_t)((previousB << (16 - shiftB)) | (bdat >> shiftB))
+                                                         : blitterBHold;
                             previousA = A;
                             previousB = bdat;
                             const uint16_t d = mintermApply(&mk, channelA, channelB, cdat);
@@ -424,6 +439,8 @@ void blitter_execute(Chipset_t* chipset){
                     //previousA = adat;
                     previousA = A;
                     previousB = bdat;
+                    if (!(useMask & 4))
+                        channelB = blitterBHold;
                     
                     
                     channelD = mintermApply(&mk, channelA, channelB, cdat);

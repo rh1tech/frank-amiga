@@ -34,5 +34,9 @@ void blitter_execute(Chipset_t*);
 void blitterFinished(void);
 // A BLTSIZE write: ends a blit whose time is still running.
 void blitterNewBlit(void);
+// frank-amiga: BLTBDAT as shifted when written (BSH and DESC at that time),
+// what channel B gives every word while its DMA is off (Chipset.c).
+extern uint16_t blitterBHold;
+void blitterHoldB(uint16_t value);
 
 #endif /* Blitter_h */

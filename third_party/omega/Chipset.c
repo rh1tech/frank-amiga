@@ -183,6 +183,7 @@ void bltamodL(uint32_t value){  //
 
 void bltbdatL(uint32_t value){  //
     chipset.bltbdat = value >> 16;
+    blitterHoldB(chipset.bltbdat);
     chipset.bltadat = value & 65535;
 }
 
@@ -501,6 +502,7 @@ void bltcdat(uint16_t value){
 }
 void bltbdat(uint16_t value){
     chipset.bltbdat = value;
+    blitterHoldB(value);
 }
 void bltadat(uint16_t value){
     chipset.bltadat = value;
