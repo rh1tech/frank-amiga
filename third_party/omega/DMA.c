@@ -1816,28 +1816,45 @@ static int __attribute__((noinline)) dmaIdleCompute(int limit) {
         return h;
     if ((chipset.dmaconr & 0x280) != 0x280 || internal.copperCycle == 4)
         return limit;
-    if (internal.copperCycle != 3 || copperWaitReached())
+    if (internal.copperCycle != 3)
         return h;
+    // frank-amiga: a WAIT with BFD clear also waits for the blitter. While
+    // a computed blit waits out its time (state 3) its end is known: the
+    // Copper cannot act before it, whatever the beam. Arte's dot landscape
+    // starts ~50 blits a frame from the Copper, each followed by such a
+    // WAIT (mask 0): they were stepped slot by slot (30 fps on the board).
+    int floor = h;
+    if (!(internal.IR2 & 0x8000u) && (chipset.dmaconr & 0x4000u)) {
+        if (blitterState != 3)
+            return h;
+        const int32_t rem = (int32_t)(blitDeadline - dmaSlotClock);
+        if (rem <= 0)
+            return h;
+        if (h + rem >= limit)
+            return limit;
+        floor = h + rem;
+    }
+    if (!(copperWaitNextBank && (internal.vPos & 0xff) == 0xff) &&
+        (copperBeam() & copperCompareMask()) >= copperWaitPosition)
+        return floor;
     // Waiting. With the standard horizontal compare mask the masked beam
     // grows with hPos, so the wait completes at its horizontal position if
     // it completes on this line at all.
     // frank-amiga: with no horizontal compare bits (Lemmings' WAITs: mask
     // $FF00) the masked beam does not change along the line, so a wait not
-    // reached now is not reached before the next line - unless it also
-    // waits for the blitter (BFD clear), whose blit may end mid-line.
-    if ((internal.IR2 & 0xfe) == 0 &&
-        ((internal.IR2 & 0x8000u) || !(chipset.dmaconr & 0x4000u)))
+    // reached now is not reached before the next line.
+    if ((internal.IR2 & 0xfe) == 0)
         return limit;
     if ((internal.IR2 & 0xfe) != 0xfe)
-        return h;
+        return floor;
     if (copperWaitNextBank && (internal.vPos & 0xff) == 0xff)
         return limit;
     const uint32_t lineEnd = ((uint32_t)(internal.vPos & 0xff) << 8) | (uint32_t)lineLast;
     if ((lineEnd & internal.IR2) < copperWaitPosition)
         return limit;               // not before the next line
     const int waitH = (int)(copperWaitPosition & 0xfe);
-    if (waitH <= h)
-        return h;
+    if (waitH <= floor)
+        return floor;
     return waitH < limit ? waitH : limit;
 }
 
