@@ -2029,14 +2029,15 @@ void diskCycle(void){
             for(int i=0;i<turboFloppy;++i){
                 if (!floppyWordDue())
                     return;     // frank-amiga: a timed track's next word is not under the head yet
-                const uint8_t b1 = floppyDataRead();
-                const uint8_t b2 = floppyDataRead();
-                floppyBits = floppyBits << 16 | (uint32_t)(b1 << 8 | b2);
+                floppyBits = floppyBits << 16 | floppyDataReadWord();
 
+                // The 16 phases of the last two words (bits 0-30 hold them
+                // all: 32-bit shifts, not 64-bit ones).
                 int found = -1;
                 const uint32_t sync = chipset.dsksync;
+                const uint32_t window = (uint32_t)floppyBits;
                 for (int k = 15; k >= 0; k--)
-                    if (((floppyBits >> k) & 0xFFFFu) == sync) { found = k; break; }
+                    if (((window >> k) & 0xFFFFu) == sync) { found = k; break; }
                 if (found >= 0) {
                     putChipReg16[INTREQ](0x9000);   //DSKSYNC INT
                     chipset.dskbytr |= 0x1000;  // set word sync bit
@@ -2052,10 +2053,16 @@ void diskCycle(void){
 #ifdef FRANK_DSK_SUM
                     { extern uint32_t frankDskSum; frankDskSum = frankDskSum * 31u + word; }
 #endif
-                    *chip_ptr(chipset.dskpt & CHIPTOP) = (uint8_t)(word >> 8);
-                    chipset.dskpt += 1;
-                    *chip_ptr(chipset.dskpt & CHIPTOP) = (uint8_t)word;
-                    chipset.dskpt += 1;
+                    if (!(chipset.dskpt & 1u)) {
+                        // One store (chip RAM is big-endian, a word never
+                        // spans banks at an even address).
+                        *(uint16_t *)chip_ptr(chipset.dskpt & CHIPTOP) =
+                            (uint16_t)(word << 8 | word >> 8);
+                    } else {
+                        *chip_ptr(chipset.dskpt & CHIPTOP) = (uint8_t)(word >> 8);
+                        *chip_ptr((chipset.dskpt + 1u) & CHIPTOP) = (uint8_t)word;
+                    }
+                    chipset.dskpt += 2;
 
                     chipset.dsklen -= 1;
 

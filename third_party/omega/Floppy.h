@@ -83,6 +83,7 @@ void floppyIndexReset();
 void floppyLineTick(void);
 int floppyDataReady(void);
 int floppyWordDue(void);
+uint16_t floppyDataReadWord(void);   // frank-amiga: two bytes, high first
 // frank-amiga: disks turn at their real speed (2 us a bit cell, two words a
 // line) instead of as fast as disk DMA asks (ini floppy=real).
 extern volatile int floppyRealSpeed;

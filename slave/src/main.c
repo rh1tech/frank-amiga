@@ -245,6 +245,14 @@ static void emu_time_frame(bool after_pace) {
     const uint32_t dt = (uint32_t)(now - t_start);
     const uint32_t wait_cyc = frame_wait_cyc;
     frame_wait_cyc = 0;
+    /* Disk DMA's turbo (words a disk slot) follows core 0's load: a turbo
+     * load streams up to a track a frame (several ms of this core), which
+     * made the frames it fell in late (Arte's loads: 25-27 ms frames); it
+     * backs off while frames are full and goes flat out while they are not. */
+    {
+        extern int turboFloppy;
+        turboFloppy = dt < 14000u ? 8 : dt < 17000u ? 4 : 2;
+    }
     if (dt > frame_max_us) frame_max_us = dt;
     if (dt > 20000u) {
         frames_late++;

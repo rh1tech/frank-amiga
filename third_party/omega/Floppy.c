@@ -484,7 +484,7 @@ static void floppyEmptyTrack(int drive) {
         track[i] = 0;
 }
 
-int floppyMountExternal(int drive) {
+FRANK_COLD int floppyMountExternal(int drive) {
     if (drive >= FLOPPY_DISK_DRIVES)
         return 0;
     drive_adf[drive] = NULL;
@@ -539,7 +539,7 @@ static inline uint32_t floppyTrackLength(int drive) {
     return drive < FLOPPY_DISK_DRIVES && ext_mode[drive] ? ext_len[drive] : 12668u;
 }
 
-int floppyMountADF(int drive, const uint8_t *adf, uint32_t size) {
+FRANK_COLD int floppyMountADF(int drive, const uint8_t *adf, uint32_t size) {
     if (drive >= FLOPPY_DISK_DRIVES || !adf || size != FLOPPY_ADF_SIZE)
         return 0;
     ext_mode[drive] = 0;
@@ -565,7 +565,7 @@ int floppyMountADF(int drive, const uint8_t *adf, uint32_t size) {
 
 // DF1 present (an external drive, detected by Kickstart at boot).
 static int drive_connected[4] = { 1, 0, 0, 0 };
-void floppyConnect(int drive) {
+FRANK_COLD void floppyConnect(int drive) {
     if (drive < FLOPPY_DISK_DRIVES) {
         drive_connected[drive] = 1;
         if (!df[drive].mfmData) {
@@ -928,7 +928,30 @@ uint8_t floppyDataRead(){ //this function should be called by the DMA
 }
 
 
-void floppyInsert(int drive){
+// frank-amiga: the next two bytes under the head (high byte first), for
+// disk DMA: one buffer check and, on the track's even bytes, one halfword
+// read of the uncached PSRAM track instead of two byte reads (a turbo load
+// streams a track a frame through here).
+uint16_t floppyDataReadWord(void) {
+#ifdef PICO_BUILD
+    const int d = driveSelected;
+    if (d < FLOPPY_DISK_DRIVES && df[d].mfmData) {
+        if (df[d].hasDisk && !floppyEnsureTrackCached(d))
+            return 0;
+        const uint32_t p = (uint32_t)df[d].index;
+        if (!(p & 1u) && p + 2u < floppyTrackLength(d)) {
+            df[d].index = (int)(p + 2u);
+            const uint16_t v = *(const volatile uint16_t *)(df[d].mfmData + p);
+            return (uint16_t)(v << 8 | v >> 8);
+        }
+    }
+#endif
+    const uint8_t b1 = floppyDataRead();
+    const uint8_t b2 = floppyDataRead();
+    return (uint16_t)(b1 << 8 | b2);
+}
+
+FRANK_COLD void floppyInsert(int drive){
 #ifdef PICO_BUILD
     if (drive >= FLOPPY_DISK_DRIVES || !drive_connected[drive])
         return;     // only DF0 and a connected DF1 take disks
@@ -969,7 +992,7 @@ void floppyInsert(int drive){
     
 }
 
-uint8_t* floppyInit(int drive){
+FRANK_COLD uint8_t* floppyInit(int drive){
     df[drive].idMode = -1;
     df[drive].index = 0;
     df[drive].cylinder = 0;
