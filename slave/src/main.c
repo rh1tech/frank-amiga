@@ -17,6 +17,8 @@
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "hardware/sync.h"
+#include "hardware/uart.h"
+#include "hardware/clocks.h"
 #include "hardware/structs/scb.h"
 #include "hardware/regs/addressmap.h"
 
@@ -135,6 +137,18 @@ static bool pace_locked;
 
 static uint64_t pace_wait_us;           /* time core 0 waited: headroom */
 
+/* The status line (every 2 s) goes out while core 0 waits for the display:
+ * printf at 115200 baud held core 0 ~22 ms for a line, one late frame (a
+ * hiccup) every report. Whatever is left at the next report is finished
+ * there. */
+static char status_line[400];
+static uint32_t status_len, status_pos;
+
+static void status_drain(void) {
+    while (status_pos < status_len && uart_is_writable(uart_default))
+        uart_putc_raw(uart_default, status_line[status_pos++]);
+}
+
 static void pace(void) {
     const uint32_t frames = host_frames_emulated;
     const uint64_t t0 = time_us_64();
@@ -152,7 +166,7 @@ static void pace(void) {
          * DAC plays it. */
         if (ahead < -2) pace_base = frames - refreshes;
         if (ahead <= 1) { pace_wait_us += time_us_64() - t0; return; }
-        tight_loop_contents();
+        status_drain();
     }
 }
 
@@ -213,6 +227,14 @@ static uint16_t joy_word(uint8_t b) {
 /* The meter: core 0's wall time per frame, from the end of one pacing
  * wait to the start of the next, averaged over 25 frames. */
 volatile uint32_t host_emu_tenths_ms;
+/* The report's window: its longest frame and the frames over a display
+ * period (each one costs emulated time, heard as the music slowing). */
+static uint32_t frame_max_us, frames_late;
+/* Core 0's cycles waiting for the CPU (core 1) this frame, and in the
+ * window's slowest late frame: mostly waiting means the CPU's core held
+ * the frame up, little means the chipset did. */
+volatile uint32_t frame_wait_cyc;
+static uint32_t late_frame_us, late_wait_cyc;
 
 static void emu_time_frame(bool after_pace) {
     static uint64_t t_start, sum_us;
@@ -220,6 +242,14 @@ static void emu_time_frame(bool after_pace) {
     const uint64_t now = time_us_64();
     if (after_pace) { t_start = now; return; }
     if (!t_start) return;
+    const uint32_t dt = (uint32_t)(now - t_start);
+    const uint32_t wait_cyc = frame_wait_cyc;
+    frame_wait_cyc = 0;
+    if (dt > frame_max_us) frame_max_us = dt;
+    if (dt > 20000u) {
+        frames_late++;
+        if (dt > late_frame_us) { late_frame_us = dt; late_wait_cyc = wait_cyc; }
+    }
     sum_us += now - t_start;
     if (++n == 25u) {
         host_emu_tenths_ms = (uint32_t)((sum_us + 1250u) / 2500u);   /* 25 frames, 0.1 ms */
@@ -305,8 +335,12 @@ void host_frame_paced(void) {
 volatile uint32_t prof_c0_dma, prof_c0_wait_cpu;
 #endif
 
+#define DWT_CYCCNT (*(volatile uint32_t *)0xE0001004u)
+
 static void __not_in_flash_func(emulation_loop)(void) {
     static int cpu_cycle_balance;
+    *(volatile uint32_t *)0xE000EDFCu |= 1u << 24;   /* DEMCR.TRCENA */
+    *(volatile uint32_t *)0xE0001000u |= 1u;         /* DWT CYCCNTENA */
 #ifdef FRANK_PROF
     prof_dwt_on();
 #endif
@@ -328,14 +362,13 @@ static void __not_in_flash_func(emulation_loop)(void) {
             uint32_t n = target - par_dma_slot;
             if (!n) {
                 /* Waiting for the CPU: build messages meanwhile. */
-#ifdef FRANK_PROF
-                const uint32_t c0 = PROF_CYC;
-#endif
+                const uint32_t c0 = DWT_CYCCNT;
                 upload_core0_hold();
                 host_events_drain_batch(16);
 #ifdef FRANK_PROF
-                prof_c0_wait_cpu += PROF_CYC - c0;
+                prof_c0_wait_cpu += DWT_CYCCNT - c0;
 #endif
+                frame_wait_cyc += DWT_CYCCNT - c0;
                 continue;
             }
             if (n > 227u)
@@ -375,14 +408,27 @@ static void __not_in_flash_func(emulation_loop)(void) {
             static uint64_t last_wait;
             const uint32_t busy = 100u - (uint32_t)((pace_wait_us - last_wait) * 100u / (now - next_report + 2000000u));
             last_wait = pace_wait_us;
-            printf("emu: %.1f frames/s, busy %lu%%, link %lu req %lu chunks %lu kwords "
-                   "%lu resyncs, audio drops %lu, bank swaps %lu, bplcon0 %04x, dpf rows %lu, clx %d, line0 %d, pc %06lx\n",
+            const uint32_t late_wait_us = late_wait_cyc / (clock_get_hz(clk_sys) / 1000000u);
+            while (status_pos < status_len)          /* the last one first */
+                uart_putc_raw(uart_default, status_line[status_pos++]);
+            const int len = snprintf(status_line, sizeof status_line,
+                   "emu: %.1f frames/s, busy %lu%%, max %lu.%lu ms, late %lu (cpu wait %lu.%lu of %lu.%lu ms), link %lu req %lu chunks %lu kwords "
+                   "%lu resyncs, audio drops %lu, bank swaps %lu, bplcon0 %04x, dpf rows %lu, clx %d, line0 %d, pc %06lx\r\n",
                    (double)(f - last_frames) * 1e6 / (double)(now - next_report + 2000000u),
-                   (unsigned long)busy, (unsigned long)pump_requests, (unsigned long)pump_chunks,
+                   (unsigned long)busy, (unsigned long)(frame_max_us / 1000u),
+                   (unsigned long)(frame_max_us / 100u % 10u), (unsigned long)frames_late,
+                   (unsigned long)(late_wait_us / 1000u), (unsigned long)(late_wait_us / 100u % 10u),
+                   (unsigned long)(late_frame_us / 1000u), (unsigned long)(late_frame_us / 100u % 10u),
+                   (unsigned long)pump_requests, (unsigned long)pump_chunks,
                    (unsigned long)(pump_words / 1000u), (unsigned long)pump_resyncs,
                    (unsigned long)hostAudioDrops, (unsigned long)chip_bank_swaps,
                    chipset.bplcon0, (unsigned long)host_dpf_rows, clxActive != 0, omegaDirectFirstLine, (unsigned long)m68k_get_reg(NULL, M68K_REG_PC));
+            status_len = len > 0 ? (uint32_t)(len < (int)sizeof status_line ? len : (int)sizeof status_line - 1) : 0u;
+            status_pos = 0;
             next_report = now + 2000000u;
+            frame_max_us = 0;
+            frames_late = 0;
+            late_frame_us = late_wait_cyc = 0;
             if (alert_seen == 1) {
                 alert_seen = 2;
                 printf("ALERT %08lx, stack %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx\n",

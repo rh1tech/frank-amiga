@@ -463,6 +463,16 @@ static void main_poll(void) {
             console_rx_poll();
         }
         media_poll();
+        /* frank-amiga: the sound ran dry (a gap or slowdown), at most a
+         * line a second. */
+        static uint32_t starved_seen;
+        static uint64_t starved_us;
+        if (audio_starved != starved_seen && time_us_64() - starved_us > 1000000u) {
+            printf("audio: starved %lu (+%lu)\n", (unsigned long)audio_starved,
+                   (unsigned long)(audio_starved - starved_seen));
+            starved_seen = audio_starved;
+            starved_us = time_us_64();
+        }
     } else {
         bringup_poll();
     }

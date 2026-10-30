@@ -36,6 +36,8 @@ void audio_set_rate(uint32_t hz);
 void audio_set_volume(uint32_t vol);
 uint32_t audio_get_volume(void);
 uint32_t audio_get_rate(void);
+/* frank-amiga: DMA buffers short of samples while sound was playing. */
+extern volatile uint32_t audio_starved;
 
 /* Bytes of PCM the ring will accept right now. */
 uint32_t audio_space(void);

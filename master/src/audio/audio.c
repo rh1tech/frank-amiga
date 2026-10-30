@@ -113,11 +113,19 @@ uint32_t audio_queued(void)
  * channels the wrong way round. Feeding zeroes costs a few hundred bytes of
  * bus traffic per interrupt and cannot desynchronise anything.
  */
+/* frank-amiga: buffers the ring could not fill while sound was playing
+ * (the emulation or the stream fell behind: heard as a gap). */
+volatile uint32_t audio_starved;
+
 static void __not_in_flash_func(fill_from_ring)(uint32_t *dst)
 {
+    static bool playing;
     uint32_t want = DMA_FRAMES * sizeof(uint32_t);
     uint32_t have = ring_used();
     uint32_t take = have < want ? have : want;
+    if (take < want && playing)
+        audio_starved++;
+    playing = take == want;
     uint8_t *out = (uint8_t *)dst;
     uint32_t tail = ring_tail;
 
