@@ -562,12 +562,14 @@ void copjmp2L(uint32_t value){
 
 void diwstrt(uint16_t value){
     chipset.diwstrt = value;
+    dmaDiwWritten();
     dmaLineStateDirty = 1;
     //printf("diwstart: %04x\n",value);
 }
 
 void diwstop(uint16_t value){
     chipset.diwstop = value;
+    dmaDiwWritten();
     dmaLineStateDirty = 1;
     
 }

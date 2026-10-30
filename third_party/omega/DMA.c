@@ -718,13 +718,37 @@ static uint8_t enabledBitplaneMask(void) {
     return (uint8_t)internal.bitplaneMask;
 }
 
+// frank-amiga: the vertical display window is a flip-flop (as vAmiga's
+// Sequencer): set on the line VSTART names, cleared on VSTOP's line or the
+// frame's last; a DIWSTRT/DIWSTOP write on such a line acts at once. A
+// window already open stays open when VSTART moves below the beam: Arte's
+// "ARTE" picture sets VSTART $29 and then $1D on line $20, and with the
+// window closed between the two the Copper ran ahead of the bitplane DMA,
+// loaded the five planes' pointers inside the fetch window and the planes
+// came out a word apart each.
+// On OCS the missing ninth comparator bits are fixed: VSTART8 is zero and
+// VSTOP8 is the inverse of VSTOP7 (see omegaDiwVerticalStop()). ECS/AGA
+// DIWHIGH programmability is outside this OCS chipset model.
+static int diwVFlop;
+
+static void diwVFlopUpdate(int line_start) {
+    const int v = internal.vPos;
+    const int start = omegaDiwVerticalStart(chipset.diwstrt);
+    const int stop = omegaDiwVerticalStop(chipset.diwstop);
+    if (v == stop || (line_start && v == OMEGA_VIDEO_FRAME_LINES - 1))
+        diwVFlop = 0;
+    else if (v == start)
+        diwVFlop = 1;
+}
+
+// DIWSTRT or DIWSTOP written (Chipset.c).
+void dmaDiwWritten(void) {
+    diwVFlopUpdate(0);
+}
+
 static int displayWindowContainsLine(int vpos) {
-    int start = omegaDiwVerticalStart(chipset.diwstrt);
-    // On OCS the missing ninth comparator bits are fixed: VSTART8 is zero and
-    // VSTOP8 is the inverse of VSTOP7 (see omegaDiwVerticalStop()). ECS/AGA
-    // DIWHIGH programmability is outside this OCS chipset model.
-    int stop = omegaDiwVerticalStop(chipset.diwstop);
-    return vpos >= start && vpos < stop;
+    (void)vpos;   // the current line's
+    return diwVFlop;
 }
 
 // Draws one HIRES word read for display only (no pointer moved).
@@ -1217,6 +1241,7 @@ static void __attribute__((noinline)) dmaEndOfLine(void) {
 
         hostDisplay(); //Call the host to update the display.
     }
+    diwVFlopUpdate(1);
 }
 
 // Fetch-window end (rare, once per line).

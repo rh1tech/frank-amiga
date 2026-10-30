@@ -32,6 +32,7 @@ extern int dmaLineStateDirty;
 // dmaIdleUntil()'s cached horizon; cleared by every CPU write to a custom
 // register (and at reset), which may start the blitter or move the Copper.
 extern int dmaIdleCacheValid;
+void dmaDiwWritten(void);   // frank-amiga: DIWSTRT/DIWSTOP written
 void dmaBitplanePointerWrite(unsigned plane, int highWord);
 int copperExecute();
 int blitterExecute();
