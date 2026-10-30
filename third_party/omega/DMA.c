@@ -628,6 +628,16 @@ static void resetBitplaneLine(void) {
         bitplaneLine.pointerAtFetchCompletion[plane] = 0;
 }
 
+// frank-amiga: the first slot of the bitplane fetch. OCS compares only
+// DDFSTRT's H8-H3 (vAmiga's ddfMask()), so a LORES fetch starts at its
+// 8-slot group. Arte's "artists" face is LORES under the HIRES screen's
+// DDFSTRT $64: the group's plane 2/4 slots fell before it, so those planes
+// fetched a word fewer a line than 1/3/5 and the face showed in stripes.
+// (HIRES keeps DDFSTRT as written: its layouts key on $3C.)
+static inline int fetchStart(void) {
+    return (chipset.bplcon0 & 0x8000) ? chipset.ddfstrt : (chipset.ddfstrt & ~7);
+}
+
 static void markBitplaneFetched(unsigned plane) {
     uint8_t planeMask = (uint8_t)(1u << (plane - 1));
     bitplaneLine.fetchedMask |= planeMask;
@@ -642,7 +652,7 @@ void dmaBitplanePointerWrite(unsigned plane, int highWord) {
             bitplaneLine.pointerLowWriteMask |= planeMask;
         if ((bitplaneLine.pointerHighWriteMask &
              bitplaneLine.pointerLowWriteMask & planeMask) != 0 &&
-            internal.hPos < chipset.ddfstrt)
+            internal.hPos < fetchStart())
             bitplaneLine.pointerReloadBeforeFetchMask |= planeMask;
     }
 }
@@ -878,14 +888,14 @@ static int slotIsActive(void (*f)(), int h) {
         return (chipset.dmaconr & 0x220) == 0x220 &&
                internal.vPos >= OMEGA_SPRITE_FIRST_LINE;
     if (f == loresPlane1 || f == hiresPlane1)
-        return lineBitplaneWindow && h >= chipset.ddfstrt &&
+        return lineBitplaneWindow && h >= fetchStart() &&
                h <= bitplaneLine.lastCycle;
     // A disabled plane's slot only clears its data latch (done once per line
     // in dmaUpdateLineState()) and offers the slot to the blitter.
     int plane = f == plane2 ? 2 : f == plane3 ? 3 : f == plane4 ? 4 :
                 f == plane5 ? 5 : f == plane6 ? 6 : 0;
     if (plane)
-        return lineBitplaneWindow && h >= chipset.ddfstrt &&
+        return lineBitplaneWindow && h >= fetchStart() &&
                h <= bitplaneLine.lastCycle &&
                (internal.bitplaneMask >> (plane - 1)) & 1;
     return 1;   // anything else always runs
@@ -894,7 +904,7 @@ static int slotIsActive(void (*f)(), int h) {
 // A slot a fetch run may include: inside the window, and a bitplane slot or
 // one that only offers itself to the Copper and the blitter.
 static int slotInFetchRun(void (*f)(), int h) {
-    if (h >= SLOT_LAST - 1 || !lineBitplaneWindow || h < chipset.ddfstrt ||
+    if (h >= SLOT_LAST - 1 || !lineBitplaneWindow || h < fetchStart() ||
         h > bitplaneLine.lastCycle)
         return 0;
     return f == hiresPlane1 || f == loresPlane1 || f == plane2 ||
@@ -952,7 +962,7 @@ static void slotNextUpdate(void) {
         if (!plane && h < SLOT_LAST - 1 && h != bitplaneLine.lastCycle &&
             (f == plane2 || f == plane3 || f == plane4 || f == plane5 || f == plane6) &&
             !slotIsActive(f, h)) {
-            const int inWindow = lineBitplaneWindow && h >= chipset.ddfstrt &&
+            const int inWindow = lineBitplaneWindow && h >= fetchStart() &&
                                  h <= bitplaneLine.lastCycle;
             plane = (f == plane2 && inWindow) || (h & 1) ? SLOT_BLITTER : SLOT_COPPER;
         }
@@ -2242,7 +2252,7 @@ int bitplaneActive(){
         return 0;
     
     //too early horisonal position let the Copper and Blitter run
-    if(internal.hPos<(chipset.ddfstrt)){
+    if(internal.hPos<fetchStart()){
         return 0;
     }
  
