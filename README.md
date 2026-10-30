@@ -53,7 +53,7 @@ into the ADF file on the card about a second later.
   or DF1 or boot from it, pick a Kickstart (`K`), and optionally make the
   choice the power-on one (written to frank-amiga.ini). F12 opens the menu:
   DF0/DF1 disk browser, Kickstart, reset, save/load state, volume, keyboard
-  joystick. The Amiga's Help key is on Insert.
+  joystick, floppy speed. The Amiga's Help key is on Insert.
 - Joysticks: USB gamepad 1 is the joystick in port 2 (games), gamepad 2 the
   one in port 1; d-pad or left stick, A fire, B second button. Without a pad,
   `joykeys` makes the arrows (Right Ctrl/Alt fire) or the numpad (0/. fire)
@@ -61,7 +61,13 @@ into the ADF file on the card about a second later.
 - Console (UART0, 115200): `df0`/`df1 <path|none>` change disks, `kick`/`ext
   <path>` change ROMs and cold-start, `boot` rereads the ini, `reset` is
   Ctrl-Amiga-Amiga, `type`/`key`/`mouse`/`joy` drive input, `fm`/`osd`/`osdkey`,
-  `vol`, `mem <chip KB> <slow KB>` (RAM, cold-start), `stats`.
+  `vol`, `mem <chip KB> <slow KB>` (RAM, cold-start), `floppy turbo|real`,
+  `stats`.
+- Floppy speed: turbo by default (disk DMA reads as fast as it asks). With
+  `floppy=real` (ini, console `floppy real` or the F12 menu; applied at once)
+  disks turn at their real speed, 2 us a bit, ~0.4 s a track: loading takes
+  as long as on an A500, and demos that show something while they load keep
+  their timing.
 
 ## Status
 

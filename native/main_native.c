@@ -311,6 +311,8 @@ int main(int argc, char **argv) {
     hostInit();
     // OMEGA_FAST_RAM_KB: the Zorro II Fast RAM board (default 2048, as the
     // board; 0 for none).
+    // frank-amiga: OMEGA_FLOPPY_REAL=1, disks at real speed (ini floppy=real).
+    if (getenv("OMEGA_FLOPPY_REAL")) floppyRealSpeed = 1;
     if (getenv("OMEGA_A500")) {   // frank-amiga: 512 KB chip + 512 KB slow
         extern uint32_t nativeChipMask, nativeSlowSize;
         nativeChipMask = 0x7FFFFu;

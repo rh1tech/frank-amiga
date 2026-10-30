@@ -17,6 +17,9 @@
  *   video=ntsc                      NTSC machine (60 Hz, 263 lines); default pal
  *   display=480                     PAL on 640x480 (240 rows shown) for displays
  *                                   that refuse 640x512
+ *   floppy=real                     disks turn at their real speed (2 us a bit,
+ *                                   ~0.4 s a track); default turbo: as fast as
+ *                                   disk DMA asks
  * Uploads go over the link (link_proto.h LINK_OP_UPLOAD_*) with the stream
  * paused; BOOT then makes the slave restart from them.
  */
@@ -31,6 +34,7 @@
 #include "ff.h"
 
 #include "link_proto.h"
+#include "link_stream.h"
 #include "stream.h"
 #include "usb_amiga.h"
 #include "scp.h"
@@ -181,6 +185,7 @@ bool media_load_config(void) {
         else if (!strcmp(k, "meter")) media_config.meter = !strcmp(v, "on") || !strcmp(v, "1");
         else if (!strcmp(k, "video")) media_config.ntsc = !strcasecmp(v, "ntsc");
         else if (!strcmp(k, "display")) media_config.display480 = atoi(v) == 480;
+        else if (!strcmp(k, "floppy")) media_config.floppy_real = !strcasecmp(v, "real");
     }
     f_close(&f);
     if (media_config.df1[0]) media_config.drive1 = true;
@@ -209,6 +214,7 @@ bool media_save_ini(void) {
     if (media_config.meter) f_printf(&f, "meter=on\n");
     if (media_config.ntsc) f_printf(&f, "video=ntsc\n");
     if (media_config.display480) f_printf(&f, "display=480\n");
+    if (media_config.floppy_real) f_printf(&f, "floppy=real\n");
     const bool ok = f_close(&f) == FR_OK;
     printf("media: %s %s\n", INI_PATH, ok ? "saved" : "NOT saved");
     return ok;
@@ -225,6 +231,7 @@ bool media_boot(void) {
     flags |= chip << LINK_BOOT_CHIP_SHIFT | slow << LINK_BOOT_SLOW_SHIFT;
     if (media_config.ntsc) flags |= LINK_BOOT_NTSC;
     else if (!media_config.display480) flags |= LINK_BOOT_ROWS256;
+    if (media_config.floppy_real) flags |= LINK_BOOT_FLOPPY_REAL;
     for (int d = 0; d < 2 && ok; d++) {
         const char *path = d ? media_config.df1 : media_config.df0;
         scp_close(&scp[d]);
@@ -478,6 +485,13 @@ bool media_sdput(uint32_t offset, uint32_t size, const char *path) {
 }
 
 void media_init(link_session_t *s) { sess = s; }
+
+void media_set_floppy(bool real) {
+    media_config.floppy_real = real;
+    stream_input(LINK_EV_FLOPPY, real ? 1u : 0u, 0, 0);
+    const bool saved = media_save_ini();
+    printf("media: floppy=%s %s\n", real ? "real" : "turbo", saved ? "saved" : "NOT saved");
+}
 
 /* PAL or NTSC: the display's rate is fixed from boot, so a change is saved
  * to the ini and the board restarts (the master's reset restarts the

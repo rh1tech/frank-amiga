@@ -83,6 +83,9 @@ void floppyIndexReset();
 void floppyLineTick(void);
 int floppyDataReady(void);
 int floppyWordDue(void);
+// frank-amiga: disks turn at their real speed (2 us a bit cell, two words a
+// line) instead of as fast as disk DMA asks (ini floppy=real).
+extern volatile int floppyRealSpeed;
 int floppyHasMedia(void);
 int floppyPortEmpty(void);
 uint16_t floppyByteReg(void);

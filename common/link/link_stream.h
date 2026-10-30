@@ -55,6 +55,7 @@ enum {
     LINK_EV_MOUSE = 2,   /* a = dx (int8), b = dy (int8), c = buttons       */
     LINK_EV_JOY   = 3,   /* a = port, b = LINK_JOY_* bits, c = 0            */
     LINK_EV_RESET = 4,   /* keyboard reset (Ctrl-A-A)                       */
+    LINK_EV_FLOPPY = 5,  /* a = 1: disks at real speed, 0: as fast as DMA   */
 };
 /* LINK_EV_JOY directions and buttons. */
 #define LINK_JOY_UP    0x01u

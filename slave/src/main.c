@@ -265,6 +265,9 @@ void host_frame_paced(void) {
         case LINK_EV_RESET:
             hostResetRequested = 1;
             break;
+        case LINK_EV_FLOPPY:
+            floppyRealSpeed = ev.a != 0;
+            break;
         default:
             break;
         }
@@ -470,6 +473,7 @@ int main(void) {
                          slow[(bf >> LINK_BOOT_SLOW_SHIFT) & 3u]);
         /* The video standard, before anything reads it. */
         omegaVideoNtsc = (bf & LINK_BOOT_NTSC) != 0;
+        floppyRealSpeed = (bf & LINK_BOOT_FLOPPY_REAL) != 0;
         dmaVideoStandardInit((bf & LINK_BOOT_ROWS256) ? 256 : 240);
         printf("Video: %s (%d lines)\n", OMEGA_VIDEO_NAME, OMEGA_VIDEO_FRAME_LINES);
     }

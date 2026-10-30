@@ -1980,6 +1980,8 @@ void diskCycle(void){
             // (Floppy.c decodes the track's sectors into its ADF).
             if (chipset.dsklen & 0x4000) {
                 for (int i = 0; i < turboFloppy; ++i) {
+                    if (floppyRealSpeed && !floppyWordDue())
+                        return;     // frank-amiga: the next word is not due yet
                     floppyWriteByte(*chip_ptr(chipset.dskpt & CHIPTOP));
                     floppyWriteByte(*chip_ptr((chipset.dskpt + 1) & CHIPTOP));
                     chipset.dskpt += 2;

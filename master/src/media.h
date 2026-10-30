@@ -17,6 +17,7 @@ typedef struct {
     bool meter;                 /* performance meter shown (osd.h) */
     bool ntsc;                  /* NTSC machine (60 Hz), else PAL */
     bool display480;            /* PAL on 640x480 (240 rows) instead of 640x512 */
+    bool floppy_real;           /* disks at real speed, else as fast as DMA asks */
     uint16_t chip_kb, slow_kb;  /* 512/1024/2048, 0/512/1024 */
 } media_config_t;
 extern media_config_t media_config;
@@ -28,6 +29,9 @@ bool media_remount(void);
 bool media_load_config(void);
 /* PAL/NTSC: saved to the ini, then the board restarts. */
 void media_set_standard(bool ntsc);
+/* Disks at real speed or turbo: applied at once (the slave reads it
+ * between frames) and saved to the ini. */
+void media_set_floppy(bool real);
 /* Writes the current configuration to frank-amiga.ini. */
 bool media_save_ini(void);
 /* Upload the configured ROMs and disk, then reboot the slave from them. */

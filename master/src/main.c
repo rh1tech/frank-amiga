@@ -401,6 +401,10 @@ static void cmd_standard(int argc, char **argv) {
     if (argc < 2) { printf("video=%s\n", media_config.ntsc ? "ntsc" : "pal"); return; }
     media_set_standard(!strcmp(argv[1], "ntsc"));
 }
+static void cmd_floppy(int argc, char **argv) {
+    if (argc < 2) { printf("floppy=%s\n", media_config.floppy_real ? "real" : "turbo"); return; }
+    media_set_floppy(!strcmp(argv[1], "real"));
+}
 static void cmd_meter(int argc, char **argv) {
     if (argc > 1) osd_meter_set(!strcmp(argv[1], "on"));
     else osd_meter_set(!osd_meter_on());
@@ -486,6 +490,7 @@ static const console_cmd_t cmds[] = {
     { "vol",    cmd_vol,    "vol [0..256]: audio output volume" },
     { "osd",    cmd_osd,    "toggle the on-screen menu (F12)" },
     { "standard", cmd_standard, "standard [pal|ntsc]: the machine's video standard (saves, restarts)" },
+    { "floppy",   cmd_floppy,   "floppy [turbo|real]: disk speed, turbo or the drive's real one (saves)" },
     { "meter",  cmd_meter,  "meter [on|off]: performance meter (EMU ms per frame, FPS)" },
     { "fm",     cmd_fm,     "toggle the file manager (F11)" },
     { "osdkey", cmd_osdkey, "osdkey <up|down|left|right|enter|esc|pgup|pgdn|home|end|bksp>..." },

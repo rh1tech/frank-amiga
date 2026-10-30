@@ -688,8 +688,14 @@ void floppyNativeTracks(const uint8_t *tracks, const uint32_t *len, const uint32
 // times, as Rob Northen Copylock does) comes with the cells' length per
 // 256-bit block. Such a track turns at its real speed: floppyLineTick()
 // runs a clock, and disk DMA takes words only as the disk would deliver
-// them (floppyWordDue()). Every other track reads as fast as DMA asks.
+// them (floppyWordDue()). Every other track reads as fast as DMA asks, or,
+// with floppyRealSpeed, at the standard 2 us a bit cell: loaders that show
+// something while they load (Arte's "artists" face) get their time, and a
+// demo keeps the pace it has on the hardware.
 static int32_t timedCreditNs;
+volatile int floppyRealSpeed;
+static int32_t plainCreditNs;   // untimed tracks at real speed
+#define FLOPPY_PLAIN_WORD_NS (16 * 2000)
 #ifdef PICO_BUILD
 static const uint16_t *timedTable(int d, int *n) {
     if (d >= FLOPPY_DISK_DRIVES || !ext_mode[d] || !timedCount[d] ||
@@ -723,7 +729,12 @@ static inline int32_t timedCell(const uint16_t *tab, int n, uint32_t byte) {
 int floppyWordDue(void) {
     int n;
     const uint16_t *tab = timedTable(driveSelected, &n);
-    if (!tab) return 1;
+    if (!tab) {
+        if (!floppyRealSpeed) return 1;
+        if (plainCreditNs < FLOPPY_PLAIN_WORD_NS) return 0;
+        plainCreditNs -= FLOPPY_PLAIN_WORD_NS;
+        return 1;
+    }
     const int32_t need = 16 * timedCell(tab, n, (uint32_t)df[driveSelected].index);
     if (timedCreditNs < need) {
         return 0;
@@ -831,6 +842,10 @@ void floppyLineTick(void) {
         }
         if (timedCreditNs > 128000) timedCreditNs = 128000;
         return;
+    }
+    if (floppyRealSpeed) {
+        plainCreditNs += 64000;          /* a PAL line */
+        if (plainCreditNs > 128000) plainCreditNs = 128000;
     }
     // frank-amiga: only a read that is running (as diskCycle() runs one:
     // DMA on, DSKLEN armed with a length) makes the index pulses itself.
