@@ -100,7 +100,15 @@ void hostDirectRowEnd(int row, int drawn);
 // whenever the DMA recomputes them; a colour write is placed with the
 // latest.
 void hostLineLayout(int first, int ham);
+// frank-amiga: raster row `row` shows bitplane pixels only in raster columns
+// [x0, x1) (the horizontal display window); sent before the row's first
+// block when the window hides some of the image. Core 1 applies it where it
+// writes the row, after every plane set is placed at its own scroll.
+void hostDirectClip(int row, int x0, int x1);
 #else
+static inline void hostDirectClip(int row, int x0, int x1) {
+    (void)row; (void)x0; (void)x1;
+}
 static inline void hostLineLayout(int first, int ham) { (void)first; (void)ham; }
 static inline void hostDirectColour(int reg, uint16_t old, uint16_t value) {
     (void)reg; (void)old; (void)value;

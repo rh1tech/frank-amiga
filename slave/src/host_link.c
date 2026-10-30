@@ -80,11 +80,14 @@ enum {
     EV_BEGIN,       // the same, first frame (no frame end before)
     EV_RESTORED,    // a savestate was loaded
     EV_LAYOUT,      // first raster column reference (bits 4..15), HAM (bit 16)
+    EV_CLIP,        // + 1 word: x0 | x1 << 16 (raster columns); row (bits 4..12)
 };
 #define EV_HAM (1u << 23)
 #define EV_DPF (1u << 24)
 #define EV_PF2PRI (1u << 25)
 #define EV_DPF_DELTA_SHIFT 26     // PF2H - PF1H + 16, 5 bits
+#define EV_SPF (1u << 31)         // with EV_DPF: one playfield, its odd and
+                                  // even planes scrolled apart
 static void evFrame(uint32_t type);
 // Core 1: the line layout colour writes are placed with (EV_LAYOUT).
 static int c1_layout_first = 2 * 0x38 + OMEGA_SPRITE_LORES_OFFSET, c1_layout_ham;
@@ -497,7 +500,8 @@ static inline uint32_t dpfBlockFlag(int row, uint32_t ev) {
     if (!(ev & EV_DPF))
         return 0;
     const int delta = (int)((ev >> EV_DPF_DELTA_SHIFT) & 31u) - 16;
-    const uint32_t st = ((ev & EV_PF2PRI) ? 1u << 5 : 0u) | ((uint32_t)delta & 31u);
+    const uint32_t st = ((ev & EV_SPF) ? 1u << 6 : 0u) |
+                        ((ev & EV_PF2PRI) ? 1u << 5 : 0u) | ((uint32_t)delta & 31u);
     if (row != dpf_row || st != dpf_state) {
         dpf_row = row;
         dpf_state = st;
@@ -532,6 +536,16 @@ static void c1LoresBlock(int row, int x, uint16_t p1, uint16_t p2, uint16_t p3,
     planes[1] = p3 | (uint32_t)p4 << 16;
     planes[2] = p5 | (uint32_t)p6 << 16;
     hostRowMix3(planes[0], planes[1], planes[2]);
+}
+
+// Core 1: the row's horizontal display window (hostDirectClip()), inside
+// the row's messages so a row taken back for MSG_ROW_SAME takes it too.
+static void c1Clip(int row, uint32_t x01) {
+    colourQueueFlush();
+    runFlush();
+    const uint32_t msg[2] = { MSG_HEADER(MSG_CLIP, row, 0, 0), x01 };
+    hostRowMix2(msg[0], msg[1]);
+    ringPush(msg, 2);
 }
 
 // Core 1: a sprite message (built by core 0, 2 or 3 words).
@@ -726,10 +740,14 @@ static inline void evqCommit(uint32_t n) {
 }
 
 // Header bits of a block record (dpfBlockFlag()).
+// A single playfield whose even planes have another delay than its odd ones
+// (BPLCON1 PF2H != PF1H) goes the same way: the master places the two plane
+// sets apart and puts their bits back together (Arte's "sanity has
+// invented" texture, BPLCON1 $00F7).
 static inline uint32_t evBlockFlags(void) {
-    if (!(chipset.bplcon0 & 0x400))
-        return 0;
     const int delta = (int)((chipset.bplcon1 >> 4) & 15) - (int)(chipset.bplcon1 & 15);
+    if (!(chipset.bplcon0 & 0x400))
+        return delta ? EV_DPF | EV_SPF | (uint32_t)(delta + 16) << EV_DPF_DELTA_SHIFT : 0;
     return EV_DPF | ((chipset.bplcon2 >> 6) & 1u ? EV_PF2PRI : 0u) |
            (uint32_t)(delta + 16) << EV_DPF_DELTA_SHIFT;
 }
@@ -752,6 +770,17 @@ void hostDirectLores(int row, int x, uint16_t p1, uint16_t p2, uint16_t p3,
     e[2] = p3 | (uint32_t)p4 << 16;
     e[3] = p5 | (uint32_t)p6 << 16;
     evqCommit(4);
+}
+
+void hostDirectClip(int row, int x0, int x1) {
+    if (row < 0 || row > 0x1ff)
+        return;
+    if (x0 < -0x8000) x0 = -0x8000;
+    if (x1 > 0x7fff) x1 = 0x7fff;
+    uint32_t *e = evqReserve(2);
+    e[0] = EV_CLIP | (uint32_t)row << 4;
+    e[1] = (uint16_t)x0 | (uint32_t)(uint16_t)x1 << 16;
+    evqCommit(2);
 }
 
 // Every colour register write (Chipset.c setColour()), so core 1's copy
@@ -921,6 +950,10 @@ static bool host_events_drain_locked(uint32_t budget) {
             n = 2;
             break;
         }
+        case EV_CLIP:
+            c1Clip((int)(h >> 4 & 0x1ffu), e[1]);
+            n = 2;
+            break;
         case EV_LAYOUT:
             c1_layout_first = (int)(h >> 4 & 0xfffu);
             c1_layout_ham = (h >> 16) & 1u;

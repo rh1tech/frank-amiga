@@ -25,8 +25,14 @@ enum {
     MSG_AUDIO,
     // frank-amiga: dual playfield state of image row `row`, sent before its
     // first DPF block and when it changes: extra bits 0-4 = PF2H - PF1H
-    // (signed, lores pixels), bit 5 = PF2PRI.
+    // (signed, lores pixels), bit 5 = PF2PRI, bit 6 = one playfield whose
+    // odd and even planes are scrolled apart (its colour numbers are the
+    // planes' bits put back together, PF2PRI unused).
     MSG_DPF,
+    // frank-amiga: + 1 word: image row `row` shows bitplane pixels only in
+    // raster columns [low half, high half) (signed); outside, the border
+    // (the horizontal display window, applied after the planes are placed).
+    MSG_CLIP,
 };
 // frank-amiga: HIRES/LORES run header extra bit 5 (header bit 28): the
 // run's blocks are dual playfield (planes 1/3/5 and 2/4/6 apart).

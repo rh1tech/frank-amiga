@@ -276,13 +276,30 @@ static uint8_t dpf_buf[DVI_DIRECT_IMAGE_WIDTH] __attribute__((aligned(4)));  // 
 static int dpf_y = -1, dpf_min, dpf_max;
 static int c1_dpf_delta;          // PF2 offset from PF1, image columns
 static bool c1_pf2pri;
+static bool c1_spf;               // one playfield, odd/even planes apart
+// frank-amiga: the horizontal display window of image row c1_clip_y
+// (MSG_CLIP), image columns [c1_clip_x0, c1_clip_x1): pixels outside are
+// written as colour 0 (the border), after the planes are placed.
+static int c1_clip_y = -1, c1_clip_x0, c1_clip_x1;
+
+static inline void C1_FUNC(c1ClipRow)(uint8_t *line, int y, int x0, int x1) {
+    if (y != c1_clip_y)
+        return;
+    for (int x = x0; x < x1 && x < c1_clip_x0; ++x)
+        line[x] = 0;
+    for (int x = x1 - 1; x >= x0 && x >= c1_clip_x1; --x)
+        line[x] = 0;
+}
 static void C1_FUNC(c1Record)(int y, int x0, int x1);
 
 // Colour numbers of a 6-bit DPF pixel: its playfields (PF1 in bits 0-2,
 // PF2 in bits 3-5 of the row buffer) and the colour of a buffer value by
 // priority (PF2PRI: 1 = PF2 in front); dpf_comp6 is the same for a raw
-// 6-bit pixel (same scroll, no buffer).
+// 6-bit pixel (same scroll, no buffer). A single playfield split by its
+// planes' delays (c1_spf) uses the buffer alike, and dpf_spf puts a buffer
+// value's plane bits back together.
 static uint8_t dpf_lut1[64], dpf_lut2[64], dpf_comp[2][64], dpf_comp6[2][64];
+static uint8_t dpf_spf[64];
 static void C1_FUNC(dpfTables)(void) {
     for (int v = 0; v < 64; ++v) {
         const uint8_t a = (uint8_t)((v & 1) | ((v >> 1) & 2) | ((v >> 2) & 4));
@@ -294,6 +311,8 @@ static void C1_FUNC(dpfTables)(void) {
         const uint8_t pa = (uint8_t)(v & 7), pb = (uint8_t)(v >> 3);
         dpf_comp[0][v] = pa ? pa : (pb ? (uint8_t)(8u + pb) : 0);
         dpf_comp[1][v] = pb ? (uint8_t)(8u + pb) : pa;
+        dpf_spf[v] = (uint8_t)((pa & 1) | (pb & 1) << 1 | (pa & 2) << 1 |
+                               (pb & 2) << 2 | (pa & 4) << 2 | (pb & 4) << 3);
     }
 }
 
@@ -305,7 +324,7 @@ static void __attribute__((noinline)) C1_FUNC(dpfFlush)(void) {
     if (!c1_image || dpf_max <= dpf_min)
         return;
     uint8_t *line = c1_image + y * DVI_DIRECT_IMAGE_WIDTH;
-    const uint8_t *comp = dpf_comp[c1_pf2pri];
+    const uint8_t *comp = c1_spf ? dpf_spf : dpf_comp[c1_pf2pri];
     // frank-amiga: four columns a step (the buffer is word aligned; the
     // row may start or end mid-word).
     int x = dpf_min;
@@ -326,18 +345,22 @@ static void __attribute__((noinline)) C1_FUNC(dpfFlush)(void) {
         line[x] = comp[dpf_buf[x]];
         dpf_buf[x] = 0;
     }
+    c1ClipRow(line, y, dpf_min, dpf_max);
     const bool ham = c1_ham;
     c1_ham = false;
     c1Record(y, dpf_min, dpf_max);
     c1_ham = ham;
 }
 
-// Clips [x, x + width) of a block to the image; returns the first index.
+// Clips [x, x + width) of a block to the image (a narrow layout's visible
+// columns); returns the first index.
 static inline int C1_FUNC(dpfClip)(int x, int width, int *end) {
-    int i0 = x < 0 ? -x : 0;
+    const int lo = c1_narrow ? HOST_VISIBLE_X0 : 0;
+    const int hi = c1_narrow ? HOST_VISIBLE_X1 : DVI_DIRECT_IMAGE_WIDTH;
+    int i0 = x < lo ? lo - x : 0;
     int i1 = width;
-    if (x + i1 > DVI_DIRECT_IMAGE_WIDTH)
-        i1 = DVI_DIRECT_IMAGE_WIDTH - x;
+    if (x + i1 > hi)
+        i1 = hi - x;
     *end = i1;
     return i0;
 }
@@ -353,7 +376,7 @@ static void C1_FUNC(dpfPlace)(int y, int image_x, const uint8_t *pixels,
         dpfFlush();
     // Playfields at the same scroll (the usual case): combine straight into
     // the row.
-    if (c1_dpf_delta == 0 && dpf_y < 0) {
+    if (c1_dpf_delta == 0 && dpf_y < 0 && !c1_spf) {
         int i1;
         const int i0 = dpfClip(image_x, width, &i1);
         if (i1 <= i0)
@@ -362,6 +385,7 @@ static void C1_FUNC(dpfPlace)(int y, int image_x, const uint8_t *pixels,
         const uint8_t *comp = dpf_comp6[c1_pf2pri];
         for (int i = i0; i < i1; ++i)
             line[i] = comp[pixels[i]];
+        c1ClipRow(c1_image + y * DVI_DIRECT_IMAGE_WIDTH, y, image_x + i0, image_x + i1);
         const bool ham = c1_ham;
         c1_ham = false;
         c1Record(y, image_x + i0, image_x + i1);
@@ -418,6 +442,7 @@ static inline void C1_FUNC(c1Copy)(uint8_t *line,
                                                int y, int x, int count) {
     for (int i = 0; i < count; ++i)
         line[x + i] = pixels[i];
+    c1ClipRow(line, y, x, x + count);
     c1Record(y, x, x + count);
 }
 
@@ -432,6 +457,15 @@ static void C1_FUNC(c1Place)(int row, int x,
     uint8_t *line = c1_image + y * DVI_DIRECT_IMAGE_WIDTH;
     if (c1_narrow) {
         int image_x = x - HOST_FETCH_LEAD;
+        // frank-amiga: dual playfield (and a single one with its planes
+        // scrolled apart) on a narrow fetch too: Arte's kaleidoscope (DDF
+        // $48-$C0, six planes) showed PF2 as half-bright colours.
+        if (c1_dpf_block) {
+            dpfPlace(y, image_x, pixels, width);
+            return;
+        }
+        if (dpf_y >= 0)
+            dpfFlush();
         int first = 0, count = width;
         if (image_x < HOST_VISIBLE_X0) {
             first = HOST_VISIBLE_X0 - image_x;
@@ -518,6 +552,7 @@ static void C1_FUNC(c1Lores)(int row, int x, uint32_t p12,
 static void C1_FUNC(c1Begin)(uint32_t layout, uint32_t size,
                              uint32_t frame_no) {
     c1_frame_no = frame_no;
+    c1_clip_y = -1;
     c1_first_row = (int16_t)(layout & 0xffffu);
     c1_step = (int)((layout >> 16) & 0xffu);
     c1_narrow = (layout >> 24) & 1u;
@@ -792,11 +827,29 @@ void C1_FUNC(hostCore1Loop)(void) {
             denise_msg_count[type]++;
 #endif
             switch (type) {
+            case MSG_CLIP: {
+                // The row's window in raster columns, mapped as c1Place()
+                // maps blocks (rotated rows send none). A DPF row still in
+                // its buffer is written first, with its own window.
+                dpfFlush();
+                c1_clip_y = -1;
+                if (!(row % c1_step)) {
+                    const int x0 = (int16_t)(msg[1] & 0xffffu);
+                    const int x1 = (int16_t)(msg[1] >> 16);
+                    const int off = c1_narrow ? HOST_FETCH_LEAD : c1_rotation;
+                    c1_clip_y = c1_first_row + row / c1_step;
+                    c1_clip_x0 = x0 - off;
+                    c1_clip_x1 = x1 - off;
+                }
+                length = 2;
+                break;
+            }
             case MSG_DPF: {
                 const uint32_t st = header >> 23;
                 dpfFlush();
                 c1_dpf_delta = 2 * ((int)((st & 31u) ^ 16u) - 16);
                 c1_pf2pri = (st >> 5) & 1u;
+                c1_spf = (st >> 6) & 1u;
                 length = 1;
                 break;
             }

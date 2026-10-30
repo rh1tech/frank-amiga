@@ -1057,13 +1057,18 @@ static void dmaUpdateLineState(void) {
         // and 3.1.4's insert-disk screens): its frame maps raster column
         // x to image column x - HOST_FETCH_LEAD, so column 0 is that many
         // columns (4 a slot) before 0x3C. Against DDFSTRT, both pictures
-        // and their sprites sat 40 columns left.
+        // and their sprites sat 40 columns left. A narrow LORES one the
+        // same way, before 0x38: anchored at its fetch, Arte's centred
+        // texture box (DDFSTRT $50) sat at the left edge, its left 20
+        // pixels cut off.
+        // frank-amiga: so is a HIRES fetch from 0x38 outside the rotated
+        // layout (DDFSTOP 0xD8): Arte's "ARTE (...)" line, HIRES at
+        // DDFSTRT $38 under a LORES $38 picture, sat 8 pixels right of it.
         lineRasterDdf = !hires && omegaDdfIsFullWidth(chipset.ddfstrt) ? 0x38
-                      : hires && chipset.ddfstrt < 0x38 ? 0x3C
-                      : hires && hostDirectActive &&
-                        !omegaDdfIsFullWidth(chipset.ddfstrt)
-                      ? 0x3C - HOST_FETCH_LEAD / 4
-                      : chipset.ddfstrt;
+                      : hires && chipset.ddfstrt < 0x3C && !lineRowRotation ? 0x3C
+                      : hostDirectActive && !omegaDdfIsFullWidth(chipset.ddfstrt)
+                      ? (hires ? 0x3C : 0x38) - HOST_FETCH_LEAD / 4
+                      : fetchStart();
         // frank-amiga: core 1 places colour writes by beam position with
         // this (dmaBeamColumn()).
         hostLineLayout(2 * lineRasterDdf + (hires ? OMEGA_SPRITE_HIRES_OFFSET
@@ -1262,6 +1267,28 @@ static void __attribute__((noinline)) dmaFetchWindowComplete(void) {
 // Runs `slots` DMA slots (one colour clock each). Batching avoids a call and
 // register save per slot from the main loop.
 static inline void hiresPlane1Fetch(void);
+// frank-amiga: the horizontal display window (HDMI direct frames). Pixels
+// outside DIWSTRT/DIWSTOP show the border colour. The line's window goes to
+// core 1 in raster columns before its first block; core 1 applies it where
+// it writes the row, after each plane set is placed at its own scroll
+// (dual playfield, BPLCON1 PF1H != PF2H). Raster column c is at LORES beam
+// position first + c / 2, as for sprites. Arte's texture and end planet
+// keep columns of unrelated data outside DIWSTRT $C0 - DIWSTOP $80.
+static FRANK_COLD void diwLineWindow(int row, int hires) {
+    if (lineRowRotation)
+        return;   // rotated rows wrap; left as they were
+    const int first = 2 * lineRasterDdf +
+                      (hires ? OMEGA_SPRITE_HIRES_OFFSET
+                             : OMEGA_SPRITE_LORES_OFFSET);
+    const int x0 = 2 * ((chipset.diwstrt & 0xff) - first);
+    const int x1 = 2 * (((chipset.diwstop & 0xff) | 0x100) - first);
+    // Image column 0 is raster column HOST_FETCH_LEAD on a narrow layout.
+    const int lead = omegaDdfIsFullWidth(chipset.ddfstrt) ? 0 : HOST_FETCH_LEAD;
+    if (x0 <= lead && x1 >= lead + HOST_RASTER_W)
+        return;   // the window shows the whole image
+    hostDirectClip(row, x0, x1);
+}
+
 static inline void loresPlane1Fetch(void);
 // planeN() for an enabled plane inside the fetch window.
 #define FETCH_PLANE(n) do { \
@@ -2353,11 +2380,12 @@ static inline void loresPlane1Fetch(void){
     // column 0 (from its 8-slot group).
     const int raster_x0 =
         !omegaDdfIsFullWidth(chipset.ddfstrt) ? 0 :
-        chipset.ddfstrt < 0x38 ? ((chipset.ddfstrt & ~7) - 0x38) * 4
-                               : (chipset.ddfstrt - 0x38) * 4;
+        ((chipset.ddfstrt & ~7) - 0x38) * 4;
     if (bitplaneLine.loresWords++ == 0 && hostDirectActive) {
         host.rasterRow = internal.vPos - OMEGA_DIRECT_FIRST_LINE;
-        host.rasterX = raster_x0 + bplScrollColumns();
+        host.rasterX = (omegaDdfIsFullWidth(chipset.ddfstrt) ? raster_x0
+                        : (fetchStart() - lineRasterDdf) * 4) +
+                       bplScrollColumns();
         loresRowsFromDiw = 1;   // rows are beam lines: no first-line skip
     } else if (bitplaneLine.loresWords == 1) {
         int full_width = omegaDdfIsFullWidth(chipset.ddfstrt);
@@ -2408,6 +2436,8 @@ static inline void loresPlane1Fetch(void){
     if (clxActive)
         clxLoresBlock(host.rasterX, chipset.bpl1dat, chipset.bpl2dat, chipset.bpl3dat, chipset.bpl4dat, chipset.bpl5dat, chipset.bpl6dat);
     if (hostDirectActive) {
+        if (bitplaneLine.loresWords == 1)
+            diwLineWindow(host.rasterRow, 0);
         hostDirectLoresFast(host.rasterRow, host.rasterX, chipset.bpl1dat, chipset.bpl2dat, chipset.bpl3dat, chipset.bpl4dat, chipset.bpl5dat, chipset.bpl6dat, chipset.bplcon0 & 0x800);
     } else {
         uint32_t *pixels = hostRasterPixels(host.rasterRow, host.rasterX);
@@ -2521,7 +2551,7 @@ static inline void hiresPlane1Fetch(void){
             // column 0 by its beam distance from 0x3C, 4 columns a slot; a
             // narrow one right of it (see lineRasterDdf).
             host.rasterRow = internal.vPos - OMEGA_DIRECT_FIRST_LINE;
-            host.rasterX = (chipset.ddfstrt < 0x38 ||
+            host.rasterX = ((chipset.ddfstrt < 0x3C && !lineRowRotation) ||
                             !omegaDdfIsFullWidth(chipset.ddfstrt)
                             ? ((chipset.ddfstrt & ~3) - lineRasterDdf) * 4
                             : 0) +
@@ -2567,6 +2597,8 @@ static inline void hiresPlane1Fetch(void){
     if (clxActive)
         clxHiresBlock(host.rasterX, chipset.bpl1dat, chipset.bpl2dat, chipset.bpl3dat, chipset.bpl4dat);
     if (hostDirectActive) {
+        if (bitplaneLine.hiresWords == 1)
+            diwLineWindow(raster_row, 1);
         hostDirectHiresFast(raster_row, host.rasterX, chipset.bpl1dat, chipset.bpl2dat, chipset.bpl3dat, chipset.bpl4dat);
     } else {
         uint32_t *line = hostRasterPixels(raster_row, host.rasterX);
