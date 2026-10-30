@@ -47,6 +47,10 @@ enum {
 };
 
 #define LINK_STREAM_FLAG_RESYNC  1u   /* master lost data: restart at a frame */
+/* STREAM_REQ arg1 bits 8-31: the low 24 bits of the oldest frame either of
+ * the master's scanout buffers holds (0: unknown). The slave leaves out
+ * rows unchanged since then (MSG_ROW_SAME). */
+#define LINK_STREAM_OLDEST_SHIFT 8u
 
 /* Input events carried in a STREAM_REQ payload: a count byte then 4-byte
  * events, at most (LINK_PAYLOAD_BYTES - 4) / 4 of them. */

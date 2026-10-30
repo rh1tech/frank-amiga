@@ -218,6 +218,7 @@ static void __not_in_flash_func(pump_once)(void) {
     case LINK_OP_STREAM_REQ: {
         pump_requests++;
         const bool resync = hdr->arg1 & LINK_STREAM_FLAG_RESYNC;
+        host_master_oldest(hdr->arg1 >> LINK_STREAM_OLDEST_SHIFT);
         const link_input_batch_t *in =
             (const link_input_batch_t *)(sess.ctrl_rx + sizeof(link_hdr_t));
         const uint32_t count = in->count < 24u ? in->count : 24u;

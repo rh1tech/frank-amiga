@@ -46,6 +46,10 @@ static inline uint32_t ringSlot(uint32_t pos) {
     return pos >= RING_WORDS ? pos - RING_WORDS : pos;
 }
 static volatile uint32_t c1_oldest_frame;
+// frank-amiga: read by core 0 for the stream requests (the slave's
+// MSG_ROW_SAME); denise_buffers_stale (set by core 0 when the stream
+// resumes after a loss) makes core 1 forget what its buffers hold.
+volatile uint32_t denise_oldest_frame, denise_buffers_stale;
 #ifdef DENISE_MSG_STATS
 volatile uint32_t denise_msg_count[16], denise_msg_words[16];
 #endif
@@ -673,11 +677,15 @@ static void C1_FUNC(c1End)(uint16_t border) {
         dvi_display_direct_publish(border);
     // Core 0 leaves out a row unchanged since the oldest frame either
     // buffer holds.
+    if (denise_buffers_stale) {
+        denise_buffers_stale = 0;
+        c1_buf_frame[0] = c1_buf_frame[1] = 0;
+    }
     c1_buf_frame[c1_buffer] = c1_frame_no;
     const uint32_t a = c1_buf_frame[0], b = c1_buf_frame[1];
-    __atomic_store_n(&c1_oldest_frame,
-                     !a || !b ? 0u : (int32_t)(a - b) < 0 ? a : b,
-                     __ATOMIC_RELEASE);
+    const uint32_t oldest = !a || !b ? 0u : (int32_t)(a - b) < 0 ? a : b;
+    __atomic_store_n(&c1_oldest_frame, oldest, __ATOMIC_RELEASE);
+    __atomic_store_n(&denise_oldest_frame, oldest, __ATOMIC_RELEASE);
     c1_image = NULL;
 }
 

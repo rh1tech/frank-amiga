@@ -352,6 +352,17 @@ static bool prev_row_sent;
 // Oldest frame either scanout buffer holds (core 1, 0: unknown).
 static volatile uint32_t c1_oldest_frame;
 
+// frank-amiga: the master's oldest buffered frame, from each stream
+// request (low 24 bits, 0: unknown), widened against our own count.
+void host_master_oldest(uint32_t low24) {
+    if (!low24) {
+        c1_oldest_frame = 0;
+        return;
+    }
+    const uint32_t now = direct_frame_no;
+    c1_oldest_frame = now - ((now - low24) & 0xFFFFFFu);
+}
+
 // The frame's layout registers, as core 0 recorded them at its start.
 typedef struct {
     uint16_t ddfstrt, ddfstop, bplcon0, lof;

@@ -18,6 +18,9 @@ uint32_t host_ring_pending(uint32_t *slot);
 void host_ring_consume(uint32_t words);
 uint32_t host_ring_tail(void);
 uint32_t host_ring_span(void);
+/* The master's oldest buffered frame (STREAM_REQ, low 24 bits, 0: unknown):
+ * rows unchanged since then go as MSG_ROW_SAME. */
+void host_master_oldest(uint32_t low24);
 
 /* Ring positions (0 .. host_ring_span()-1) where a frame's MSG_BEGIN sits,
  * oldest first. */

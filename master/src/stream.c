@@ -73,7 +73,8 @@ bool stream_poll(void) {
         denise_resync_request = 0;
         resync = true;
     }
-    const uint32_t flags = resync ? LINK_STREAM_FLAG_RESYNC : 0u;
+    const uint32_t flags = (resync ? LINK_STREAM_FLAG_RESYNC : 0u) |
+                           (denise_oldest_frame & 0xFFFFFFu) << LINK_STREAM_OLDEST_SHIFT;
     const uint64_t t0 = time_us_64();
     bool ok = link_m_send_ctrl(sess, LINK_OP_STREAM_REQ, expect_seq - 1u, flags,
                                &batch, 4u + batch.count * 4u);
@@ -108,6 +109,7 @@ bool stream_poll(void) {
         start = h->frame_off;
         resync = false;
         stream_stats.resyncs++;
+        denise_buffers_stale = 1;   /* rows of the lost data were not drawn */
     }
     if (words > start)
         denise_ring_put(payload + start, words - start);

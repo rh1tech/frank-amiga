@@ -22,6 +22,9 @@ extern volatile uint32_t hostCaptureHold;
 /* Called by core 1 when it meets a message it cannot parse. */
 void denise_stream_corrupt(uint32_t header);
 extern volatile uint32_t denise_corrupt_count;
+/* frank-amiga: the oldest frame the scanout buffers hold (0: unknown), for
+ * the stream requests; set denise_buffers_stale after a stream loss. */
+extern volatile uint32_t denise_oldest_frame, denise_buffers_stale;
 extern volatile uint32_t denise_resync_request;
 extern volatile uint32_t denise_audio_dropped, denise_audio_adjusted;
 
