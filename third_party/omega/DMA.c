@@ -1131,8 +1131,8 @@ static void rotatedTailEndOfLine(void) {
 // frank-amiga: the HDMI output shows image rows DIRECT_SHOWN_FIRST ..
 // +DIRECT_SHOWN_ROWS-1 (PAL 640x480: 240 of the 256). Each frame notes the
 // beam lines that fetched bitplanes; when they leave that window the image's
-// first line moves just enough to bring them back (the top wins when they
-// do not fit), once the same move was wanted for a few frames in a row.
+// first line moves just enough to bring them back (centred when they do
+// not fit), once the same move was wanted for a few frames in a row.
 // frank-amiga: or all 256 (dmaVideoStandardInit(), a 640x512 display).
 static int directShownFirst = 8, directShownRows = 240;
 #define DIRECT_SHOWN_FIRST directShownFirst
@@ -1160,9 +1160,14 @@ static void directWindowFrame(void) {
     if (bottom < 0)
         return;                         // no bitplanes: keep the window
     int first = DIRECT_FIRST_LINE_STD;
-    if (bottom > first + DIRECT_SHOWN_FIRST + DIRECT_SHOWN_ROWS - 1)
+    if (bottom - top + 1 > DIRECT_SHOWN_ROWS)
+        // Taller than the display: cropped evenly at both ends, as a
+        // monitor's overscan does (Arte's "ARTE" picture, lines 29..308,
+        // keeps its title and credit line).
+        first = (top + bottom + 1 - DIRECT_SHOWN_ROWS) / 2 - DIRECT_SHOWN_FIRST;
+    else if (bottom > first + DIRECT_SHOWN_FIRST + DIRECT_SHOWN_ROWS - 1)
         first = bottom - (DIRECT_SHOWN_FIRST + DIRECT_SHOWN_ROWS - 1);
-    if (top < first + DIRECT_SHOWN_FIRST)
+    else if (top < first + DIRECT_SHOWN_FIRST)
         first = top - DIRECT_SHOWN_FIRST;
     if (first < DIRECT_FIRST_LINE_MIN)
         first = DIRECT_FIRST_LINE_MIN;
