@@ -236,7 +236,7 @@ void ADF2MFM(int fd, uint8_t* mfm){
 #endif // !PICO_BUILD
 
 // ── RP2350 version: ADF data already in a memory buffer ──────────────────
-void ADF2MFM_from_mem(const uint8_t* adf, uint32_t size, uint8_t* mfm) {
+FRANK_COLD void ADF2MFM_from_mem(const uint8_t* adf, uint32_t size, uint8_t* mfm) {
     int sectors = (int)(size / 512);
     int tracks  = sectors / 22;
 
@@ -597,7 +597,7 @@ static inline uint32_t mfmDecode(const volatile uint8_t *p, int span) {
     return (mfmLong(p) & 0x55555555u) << 1 | (mfmLong(p + span) & 0x55555555u);
 }
 
-void floppyWriteDone(void) {
+FRANK_COLD void floppyWriteDone(void) {
     const int d = driveSelected;
     const uint32_t n = write_pos;
     write_pos = 0;

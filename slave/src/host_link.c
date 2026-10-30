@@ -826,7 +826,7 @@ static void evFrame(uint32_t type) {
 // A savestate was loaded (savestate.c): the machine jumped, so core 1's
 // picture of it is stale. The colour registers go again, then every row is
 // resent (as for a new layout), with the palette and the DPF state.
-void host_state_restored(void) {
+FRANK_COLD void host_state_restored(void) {
     for (int i = 0; i < 32; ++i) {
         uint32_t *e = evqReserve(2);
         e[0] = EV_COLOUR | (uint32_t)i << 4;
@@ -969,7 +969,7 @@ static bool host_events_drain_locked(uint32_t budget) {
 // ── Lifecycle ─────────────────────────────────────────────────────────────
 volatile uint32_t host_frames_emulated;
 
-void hostInit(void) {
+FRANK_COLD void hostInit(void) {
     host.pixels = raster_scratch;
     host.rasterRow = 0;
     host.rasterX = 0;

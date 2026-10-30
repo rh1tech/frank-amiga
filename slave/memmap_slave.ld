@@ -65,6 +65,8 @@ SECTIONS
          * .data below takes them and crt0 copies them to SRAM. Cold Musashi
          * handlers stay in flash; the hot ones are .time_critical (m68khot.h). */
         *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: *DMA.c.o *DMA.c.obj *Collision.c.o *Collision.c.obj *CIA.c.o *CIA.c.obj *Blitter.c.o *Blitter.c.obj *Floppy.c.o *Floppy.c.obj *Audio.c.o *Audio.c.obj *Chipset.c.o *Chipset.c.obj *m68kcpu.c.o *m68kcpu.c.obj *Memory.c.o *Memory.c.obj *host_link.c.o *host_link.c.obj *link_pump.c.o *link_pump.c.obj *link_bus.c.o *link_bus.c.obj *link_session.c.o *link_session.c.obj) .text*)
+        /* frank-amiga: seldom-run code of those files (FRANK_COLD, Chipset.h) */
+        *(.flashtext*)
         *(.fini)
         /* Pull all c'tors into .text */
         *crtbegin.o(.ctors)

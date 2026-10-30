@@ -18,6 +18,14 @@
 #include <stdio.h>
 #include <stdint.h>
 
+// frank-amiga: seldom-run code (per frame, per disk) in a file the board
+// keeps in SRAM goes to flash instead (slave/memmap_slave.ld .flashtext).
+#ifdef PICO_BUILD
+#define FRANK_COLD __attribute__((noinline, section(".flashtext")))
+#else
+#define FRANK_COLD
+#endif
+
 #define CHIPBASE 0xDFF000
 #define BLTDDAT  0x0
 #define DMACONR  0x1
